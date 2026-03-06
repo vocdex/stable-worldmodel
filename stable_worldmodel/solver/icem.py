@@ -13,7 +13,9 @@ from .solver import Costable
 
 
 class ICEMSolver:
-    """Improved Cross Entropy Method solver with colored noise and elite retention.
+    """Improved Cross Entropy Method (iCEM) solver with colored noise and elite retention.
+    iCEM improves the sample efficiency over standard CEM and was introduced by
+    [1] for real-time planning.
 
     Args:
         model: World model implementing the Costable protocol.
@@ -22,12 +24,16 @@ class ICEMSolver:
         var_scale: Initial variance scale for the action distribution.
         n_steps: Number of CEM iterations.
         topk: Number of elite samples to keep for distribution update.
-        noise_beta: Colored noise exponent. 0 = white (standard CEM).
+        noise_beta: Colored noise exponent. 0 = white (standard CEM), >0 = more low-frequency noise.
         alpha: Momentum for mean/std EMA update.
         n_elite_keep: Number of elites carried from previous iteration.
         return_mean: If False, return best single trajectory instead of mean.
         device: Device for tensor computations.
         seed: Random seed for reproducibility.
+        
+    [1] C. Pinneri, S. Sawant, S. Blaes, J. Achterhold, J. Stueckler, M. Rolinek and
+    G, Martius, Georg. "Sample-efficient Cross-Entropy Method for Real-time Planning".
+    Conference on Robot Learning, 2020.
     """
 
     def __init__(
