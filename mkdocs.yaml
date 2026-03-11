@@ -23,10 +23,11 @@ nav:
       - envs/dmc.md
       - envs/ogb.md
       - envs/tworoom.md
+  - cli.md
   # - Tutorial:
   #     - tutorial/collect_data.md
   #     - tutorial/new_env.md
-  #     - tutorial/training_wm.md 
+  #     - tutorial/training_wm.md
   - API:
       - api/world.md
       - api/policy.md
