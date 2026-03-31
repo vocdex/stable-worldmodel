@@ -277,7 +277,7 @@ def checkpoints(
     table.add_column('Checkpoint', justify='left', style='magenta')
 
     def _ckpt_name(p):
-        return p.stem.removesuffix('_object')
+        return p.stem
 
     def _by_mtime(p):
         return p.stat().st_mtime
@@ -294,7 +294,7 @@ def checkpoints(
         return bool(pattern.search(ckpt) or pattern.search(run))
 
     # Root-level checkpoints (directly in cache_dir)
-    root_files = sorted(cache_dir.glob('*_object.ckpt'), key=_by_mtime)
+    root_files = sorted(cache_dir.glob('*.pt'), key=_by_mtime)
     if root_files:
         names = [
             _ckpt_name(p) for p in root_files if _matches('', _ckpt_name(p))
@@ -306,7 +306,7 @@ def checkpoints(
     for folder in sorted(cache_dir.iterdir()):
         if not folder.is_dir():
             continue
-        ckpt_files = sorted(folder.glob('*_object.ckpt'), key=_by_mtime)
+        ckpt_files = sorted(folder.glob('*.pt'), key=_by_mtime)
         if not ckpt_files:
             continue
         run_name = folder.name
