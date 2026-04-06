@@ -114,6 +114,26 @@ register(
 )
 
 
+##############
+# MANISKILL3 #
+##############
+
+register(
+    id='swm/MSPickCube-v1',
+    entry_point='stable_worldmodel.envs.maniskill.pick_cube_env:PickCubeEnv',
+)
+
+register(
+    id='swm/MSStackCube-v1',
+    entry_point='stable_worldmodel.envs.maniskill.stack_cube_env:StackCubeEnv',
+)
+
+register(
+    id='swm/MSStackPyramid-v1',
+    entry_point='stable_worldmodel.envs.maniskill.stack_pyramid_env:StackPyramidEnv',
+)
+
+
 ############
 # DISCRETE #
 ############

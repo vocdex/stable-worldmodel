@@ -369,20 +369,26 @@ class AddPixelsWrapper(gym.Wrapper):
         img = render_fn()
         t1 = time.time()
 
-        def _process_img(img_array: np.ndarray) -> np.ndarray:
-            # Convert to PIL Image for resizing
+        def _process_img(
+            img_array: np.ndarray, key: str = '',
+        ) -> np.ndarray:
+            is_seg = 'seg' in key.lower()
             pil_img = self.Image.fromarray(img_array)
             height, width = self.pixels_shape
-            pil_img = pil_img.resize((width, height), self.Image.BILINEAR)
-            # Optionally apply torchvision transform
-            if self.torchvision_transform is not None:
+            resample = (
+                self.Image.NEAREST if is_seg else self.Image.BILINEAR
+            )
+            pil_img = pil_img.resize((width, height), resample)
+            if self.torchvision_transform is not None and not is_seg:
                 pixels = self.torchvision_transform(pil_img)
             else:
                 pixels = np.array(pil_img)
             return pixels
 
         if isinstance(img, dict):
-            pixels = {f'pixels.{k}': _process_img(v) for k, v in img.items()}
+            pixels = {
+                f'pixels.{k}': _process_img(v, k) for k, v in img.items()
+            }
         elif isinstance(img, (list | tuple)):
             pixels = {
                 f'pixels.{i}': _process_img(v) for i, v in enumerate(img)
