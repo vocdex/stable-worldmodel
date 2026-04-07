@@ -1,6 +1,7 @@
 import numpy as np
 
 from stable_worldmodel.envs.maniskill.oracles import (
+    ComposableTabletopOracle,
     PickCubeMarkovOracle,
     StackCubeMarkovOracle,
     StackPyramidMarkovOracle,
@@ -11,6 +12,7 @@ ORACLE_MAP = {
     'PickCube': PickCubeMarkovOracle,
     'StackCube': StackCubeMarkovOracle,
     'StackPyramid': StackPyramidMarkovOracle,
+    'ComposableTabletop': ComposableTabletopOracle,
 }
 
 # Episode mode probabilities  [clean, noisy, play, random]
@@ -91,8 +93,16 @@ class ManiSkillExpertPolicy(BasePolicy):
             raise ValueError(f'No oracle for env {env_name!r}')
 
         n = len(envs)
+        # Pass shape info to ComposableTabletop oracle
+        oracle_kwargs = {}
+        single_env = envs[0].unwrapped
+        if env_name == 'ComposableTabletop' and hasattr(single_env, '_object_specs'):
+            specs = single_env._object_specs
+            oracle_kwargs['task'] = 'stack' if len(specs) >= 2 else 'pick'
+            oracle_kwargs['num_objects'] = len(specs)
+            oracle_kwargs['shapes'] = [s.shape for s in specs]
         self._oracle_agents = [
-            oracle_cls(min_norm=self.min_norm) for _ in range(n)
+            oracle_cls(min_norm=self.min_norm, **oracle_kwargs) for _ in range(n)
         ]
         self._ou = [
             OUNoise(3, self.rng, theta=self.noise_theta) for _ in range(n)
@@ -155,14 +165,15 @@ class ManiSkillExpertPolicy(BasePolicy):
             action = np.array(action)
 
             if mode == 'noisy':
-                # OU position noise (always active)
+                # OU position noise
                 action[:3] += self._ou[i].sample()
 
                 # Discrete drop events while grasped
                 if not oracle._task_done:
                     grasped = info.get(
                         'eval/is_cube_grasped',
-                        info.get('eval/is_cubeA_grasped', False),
+                        info.get('eval/is_cubeA_grasped',
+                        info.get('eval/is_obj_0_grasped', False)),
                     )
                     if self._drop_remaining[i] > 0:
                         action[3] = 1.0

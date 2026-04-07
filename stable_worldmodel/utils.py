@@ -114,8 +114,9 @@ def record_video_from_dataset(
     max_steps: int = 500,
     fps: int = 30,
     viewname: str | list[str] = 'pixels',
+    fmt: str = 'mp4',
 ) -> None:
-    """Replay stored dataset episodes and export them as MP4 videos.
+    """Replay stored dataset episodes and export them as videos or GIFs.
 
     Args:
         video_path: Directory or file path to save the video(s).
@@ -124,6 +125,7 @@ def record_video_from_dataset(
         max_steps: Maximum frames per video.
         fps: Frames per second for the output video.
         viewname: Key(s) in the dataset to use as video frames.
+        fmt: Output format, either 'mp4' or 'gif'.
     """
     import imageio
 
@@ -137,11 +139,15 @@ def record_video_from_dataset(
     )
 
     for ep_idx in episode_idx:
-        file_path = Path(video_path, f'episode_{ep_idx}.mp4')
+        file_path = Path(video_path, f'episode_{ep_idx}.{fmt}')
         steps = dataset.load_episode(ep_idx)
         frames = np.concatenate([steps[v].numpy() for v in viewname], axis=2)
         frames = frames[:max_steps]
-        imageio.mimsave(file_path, frames.transpose(0, 2, 3, 1), fps=fps)
+        frames = frames.transpose(0, 2, 3, 1)
+        if fmt == 'gif':
+            imageio.mimsave(file_path, frames, fps=fps, loop=0)
+        else:
+            imageio.mimsave(file_path, frames, fps=fps)
 
     print(f'Video saved to {video_path}')
 

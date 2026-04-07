@@ -133,6 +133,11 @@ register(
     entry_point='stable_worldmodel.envs.maniskill.stack_pyramid_env:StackPyramidEnv',
 )
 
+register(
+    id='swm/MSComposableTabletop-v1',
+    entry_point='stable_worldmodel.envs.maniskill.composable_tabletop_env:ComposableTabletopSWMEnv',
+)
+
 
 ############
 # DISCRETE #

@@ -5,6 +5,7 @@ from mani_skill.utils.registration import register_env
 from mani_skill.envs.tasks.tabletop.pick_cube import PickCubeEnv
 from mani_skill.envs.tasks.tabletop.stack_cube import StackCubeEnv
 from mani_skill.envs.tasks.tabletop.stack_pyramid import StackPyramidEnv
+from stable_worldmodel.envs.maniskill.composable_tabletop_ms_env import ComposableTabletopMSEnv
 
 # Move camera closer to the table (10% closer) for tighter framing of the workspace
 _CAMERA_DISTANCE_SCALE = 1.0
@@ -63,4 +64,9 @@ class StackCubeStaticEnv(StaticCameraMixin, StackCubeEnv):
 
 @register_env('StackPyramid-Static-v1', max_episode_steps=500)
 class StackPyramidStaticEnv(StaticCameraMixin, StackPyramidEnv):
+    pass
+
+
+@register_env('ComposableTabletop-Static-v1', max_episode_steps=500)
+class ComposableTabletopStaticEnv(StaticCameraMixin, ComposableTabletopMSEnv):
     pass

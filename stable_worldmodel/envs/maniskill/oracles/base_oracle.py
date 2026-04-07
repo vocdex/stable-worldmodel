@@ -13,16 +13,14 @@ _PLAY_HIGH = np.array([0.15, 0.15, 0.10])
 class PandaMarkovOracle:
     """Base class for closed-loop Markov oracles on ManiSkill Panda tasks.
 
-    All oracles use pd_ee_delta_pos control mode (4D actions: dx, dy, dz, gripper).
-    The Panda controller maps [-1, 1] to [-0.1, 0.1] m/step for EE delta,
-    and [-1, 1] to [closed, open] for the gripper.
-
-    After the task-specific phases complete, the oracle continuously visits
-    random waypoints across the workspace until the episode ends.
+    Uses pd_ee_delta_pos control (4D actions: dx, dy, dz, gripper).
+    Position maps [-1, 1] to [-0.1, 0.1] m/step.
+    Gripper: -1 = close, +1 = open.
     """
 
     GRIPPER_OPEN = 1.0
     GRIPPER_CLOSE = -1.0
+    ACTION_DIM = 4
 
     def __init__(self, min_norm=0.1, gain=2.0, max_steps=200):
         self._min_norm = min_norm
@@ -52,29 +50,22 @@ class PandaMarkovOracle:
         """Slowly wander between waypoints after task completion."""
         if np.linalg.norm(self._waypoint - tcp) < 0.04:
             self._waypoint = np.random.uniform(_WANDER_LOW, _WANDER_HIGH)
-        diff = self._waypoint - tcp
-        action = np.zeros(4)
-        action[:3] = diff * 1.5
-        action[3] = self.GRIPPER_OPEN
-        return np.clip(action, -1, 1)
+        return self.ee_action(tcp, self._waypoint, self.GRIPPER_OPEN)
 
     def _play_action(self, tcp):
         """Sweep near the table surface, pushing and bumping objects."""
         if np.linalg.norm(self._waypoint - tcp) < 0.03:
             self._waypoint = np.random.uniform(_PLAY_LOW, _PLAY_HIGH)
-            # Randomly toggle gripper for grasp attempts
             self._play_gripper = np.random.choice(
                 [self.GRIPPER_OPEN, self.GRIPPER_CLOSE],
             )
-        diff = self._waypoint - tcp
-        action = np.zeros(4)
-        action[:3] = diff * 1.5
-        action[3] = self._play_gripper
-        return np.clip(action, -1, 1)
+        return self.ee_action(tcp, self._waypoint, self._play_gripper)
 
     def shape_diff(self, diff):
-        """Shape the difference vector to have a minimum norm."""
+        """Scale direction but don't amplify when very close to target."""
         diff_norm = np.linalg.norm(diff)
+        if diff_norm < 0.005:
+            return diff  # within 5mm — don't amplify, prevents table pressing
         if diff_norm >= self._min_norm:
             return diff
         return diff / (diff_norm + 1e-6) * self._min_norm
@@ -83,11 +74,14 @@ class PandaMarkovOracle:
         if self._debug:
             print(f'Phase {phase:50}', end=' ')
 
-    def ee_action(self, tcp, target, gripper):
-        """Compute 4D pd_ee_delta_pos action toward target."""
+    def ee_action(self, tcp, target, gripper, tcp_quat=None):
+        """Compute 4D pd_ee_delta_pos action toward target.
+
+        tcp_quat is accepted but ignored (kept for API compat).
+        """
         diff = target - tcp
         diff = self.shape_diff(diff)
-        action = np.zeros(4)
+        action = np.zeros(self.ACTION_DIM)
         action[:3] = diff * self._gain
         action[3] = gripper
         return np.clip(action, -1, 1)
