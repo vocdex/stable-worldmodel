@@ -27,6 +27,7 @@ os.environ.setdefault('MUJOCO_GL', 'egl')
 import h5py
 import hdf5plugin  # noqa: F401
 import numpy as np
+from scipy.ndimage import binary_dilation
 import tqdm
 
 from stable_worldmodel.envs.ogbench.cube_env import CubeEnv
@@ -73,6 +74,9 @@ def main():
         pixel_transparent_arm=False,
     )
     env.reset()
+    # Disable antialiasing for segmentation rendering to avoid border artifacts.
+    # See: https://github.com/google-deepmind/dm_control/issues/395
+    env._model.vis.quality.offsamples = 0
     lut = build_geom_to_label(env._model)
 
     ds_name = 'segmentation' if args.size is None else f'segmentation_{args.size}'
@@ -98,6 +102,9 @@ def main():
             geom_ids = raw[:, :, 0]
             geom_ids = np.clip(geom_ids, -1, len(lut) - 1)
             mask = np.where(geom_ids >= 0, lut[geom_ids], LABEL_BG)
+            # Relabel stray arm pixels at cube border (z-fighting residuals).
+            cube_dilated = binary_dilation(mask == LABEL_CUBE)
+            mask[(mask == LABEL_ARM) & cube_dilated] = LABEL_CUBE
             buf[buf_idx] = mask
             buf_idx += 1
 
