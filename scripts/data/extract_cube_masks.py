@@ -14,10 +14,15 @@ Usage:
     MUJOCO_GL=egl python scripts/data/extract_cube_masks.py \
         --h5-path ~/.stable_worldmodel/cube_single/cube_single_expert.h5
 
+    # Also re-render RGB without shadows:
+    MUJOCO_GL=egl python scripts/data/extract_cube_masks.py \
+        --h5-path ~/.stable_worldmodel/cube_single/cube_single_expert.h5 \
+        --no-shadow
+
     # Render at 256x256 instead:
     MUJOCO_GL=egl python scripts/data/extract_cube_masks.py \
         --h5-path ~/.stable_worldmodel/cube_single/cube_single_expert.h5 \
-        --size 256
+        --size 256 --no-shadow
 """
 import argparse
 import os
@@ -26,6 +31,7 @@ os.environ.setdefault('MUJOCO_GL', 'egl')
 
 import h5py
 import hdf5plugin  # noqa: F401
+import mujoco
 import numpy as np
 from scipy.ndimage import binary_dilation
 import tqdm
@@ -54,6 +60,8 @@ def main():
     parser.add_argument('--h5-path', required=True)
     parser.add_argument('--size', type=int, default=None,
                         help='render resolution (default: match pixels in H5)')
+    parser.add_argument('--no-shadow', action='store_true',
+                        help='re-render RGB pixels with shadows disabled')
     parser.add_argument('--batch', type=int, default=1000,
                         help='timesteps to buffer before flushing to disk')
     args = parser.parse_args()
@@ -77,27 +85,41 @@ def main():
     # Disable antialiasing for segmentation rendering to avoid border artifacts.
     # See: https://github.com/google-deepmind/dm_control/issues/395
     env._model.vis.quality.offsamples = 0
+    if args.no_shadow:
+        env._scene_option.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = False
     lut = build_geom_to_label(env._model)
 
-    ds_name = 'segmentation' if args.size is None else f'segmentation_{args.size}'
+    seg_name = 'segmentation' if args.size is None else f'segmentation_{args.size}'
+    px_name = ('pixels_noshadow' if args.size is None
+               else f'pixels_noshadow_{args.size}') if args.no_shadow else None
 
     with h5py.File(args.h5_path, 'a') as f:
         n = f['qpos'].shape[0]
 
-        if ds_name in f:
-            del f[ds_name]
+        if seg_name in f:
+            del f[seg_name]
         seg_ds = f.create_dataset(
-            ds_name, shape=(n, h, w), dtype=np.uint8,
+            seg_name, shape=(n, h, w), dtype=np.uint8,
             chunks=(min(args.batch, n), h, w),
         )
 
-        buf = np.empty((args.batch, h, w), dtype=np.uint8)
+        if px_name:
+            if px_name in f:
+                del f[px_name]
+            px_ds = f.create_dataset(
+                px_name, shape=(n, h, w, 3), dtype=np.uint8,
+                chunks=(min(args.batch, n), h, w, 3),
+            )
+            px_buf = np.empty((args.batch, h, w, 3), dtype=np.uint8)
+
+        seg_buf = np.empty((args.batch, h, w), dtype=np.uint8)
         buf_idx = 0
 
-        for i in tqdm.tqdm(range(n), desc='Rendering segmentation'):
+        for i in tqdm.tqdm(range(n), desc='Rendering'):
             qpos = f['qpos'][i]
             qvel = f['qvel'][i]
             env.set_state(qpos, qvel)
+
             raw = env.render(segmentation=True)  # (H, W, 2): [geom_id, geom_type]
             geom_ids = raw[:, :, 0]
             geom_ids = np.clip(geom_ids, -1, len(lut) - 1)
@@ -105,20 +127,30 @@ def main():
             # Relabel stray arm pixels at cube border (z-fighting residuals).
             cube_dilated = binary_dilation(mask == LABEL_CUBE)
             mask[(mask == LABEL_ARM) & cube_dilated] = LABEL_CUBE
-            buf[buf_idx] = mask
+            seg_buf[buf_idx] = mask
+
+            if px_name:
+                px_buf[buf_idx] = env.render()
+
             buf_idx += 1
 
             if buf_idx == args.batch:
                 start = i - args.batch + 1
-                seg_ds[start:start + args.batch] = buf
+                seg_ds[start:start + args.batch] = seg_buf
+                if px_name:
+                    px_ds[start:start + args.batch] = px_buf
                 buf_idx = 0
 
         if buf_idx > 0:
             start = n - buf_idx
-            seg_ds[start:n] = buf[:buf_idx]
+            seg_ds[start:n] = seg_buf[:buf_idx]
+            if px_name:
+                px_ds[start:n] = px_buf[:buf_idx]
 
     env.close()
-    print(f'Wrote {ds_name} ({n}, {h}, {w}) to {args.h5_path}')
+    print(f'Wrote {seg_name} ({n}, {h}, {w}) to {args.h5_path}')
+    if px_name:
+        print(f'Wrote {px_name} ({n}, {h}, {w}, 3) to {args.h5_path}')
 
 
 if __name__ == '__main__':
