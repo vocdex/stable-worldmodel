@@ -765,6 +765,7 @@ class World:
         callables: list[dict] | None = None,
         save_video: bool = True,
         video_path: str | Path = './',
+        variation_overrides: dict | None = None,
     ) -> dict:
         """Evaluate the policy starting from states sampled from a dataset.
 
@@ -874,6 +875,11 @@ class World:
                 options[i]['variation_values'] = {
                     k: v[i] for k, v in variations_dict.items()
                 }
+
+        if variation_overrides is not None:
+            for i in range(self.num_envs):
+                options[i]['variation'] = variation_overrides.get('variation', [])
+                options[i]['variation_values'] = variation_overrides.get('variation_values', {})
 
         init_step.update(deepcopy(goal_step))
         self.reset(seed=seeds, options=options)  # set seeds for all envs

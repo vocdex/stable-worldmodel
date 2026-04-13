@@ -196,9 +196,26 @@ class PushT(gym.Env):
                 'rendering': swm_spaces.Dict(
                     {'render_goal': swm_spaces.Discrete(2, init_value=1)}
                 ),
+                'distractor': swm_spaces.Dict(
+                    {
+                        'color': swm_spaces.RGBBox(
+                            init_value=np.array([128, 128, 128], dtype=np.uint8)
+                        ),
+                        'scale': swm_spaces.Box(
+                            low=10, high=40, init_value=20,
+                            shape=(), dtype=np.float32,
+                        ),
+                        'position': swm_spaces.Box(
+                            low=30, high=480,
+                            init_value=np.array([80, 80], dtype=np.float64),
+                            shape=(2,), dtype=np.float64,
+                        ),
+                    }
+                ),
             },
             sampling_order=[
                 'background',
+                'distractor',
                 'goal',
                 'block',
                 'agent',
@@ -229,6 +246,7 @@ class PushT(gym.Env):
         self.space = None
         self.render_buffer = None
         self.latest_action = None
+        self._has_distractor = False
 
         self.with_target = with_target
         self.coverage_arr = []
@@ -246,6 +264,9 @@ class PushT(gym.Env):
             options,
             DEFAULT_VARIATIONS,
         )
+
+        variations = options.get('variation', DEFAULT_VARIATIONS)
+        self._has_distractor = any(v.startswith('distractor') for v in variations)
 
         ### setup pymunk space
         self._setup()
@@ -463,6 +484,12 @@ class PushT(gym.Env):
             self.block, self.variation_space['block']['color'].value.tolist()
         )
 
+        if self._has_distractor:
+            self._set_body_color(
+                self.distractor,
+                self.variation_space['distractor']['color'].value.tolist(),
+            )
+
         # Draw agent and block.
         self.space.debug_draw(draw_options)
 
@@ -580,6 +607,20 @@ class PushT(gym.Env):
                 [self.variation_space['goal']['angle'].value],
             ]
         )
+
+        # Optional static distractor (purely visual, no physics interaction)
+        if self._has_distractor:
+            scale = float(self.variation_space['distractor']['scale'].value)
+            position = self.variation_space['distractor']['position'].value.tolist()
+            color = self.variation_space['distractor']['color'].value.tolist()
+            body = pymunk.Body(body_type=pymunk.Body.STATIC)
+            body.position = position
+            verts = [(-scale, -scale), (-scale, scale), (scale, scale), (scale, -scale)]
+            shape = pymunk.Poly(body, verts)
+            shape.color = pygame.Color(*color)
+            shape.filter = pymunk.ShapeFilter(categories=0, mask=0)
+            self.space.add(body, shape)
+            self.distractor = body
 
         # Add collision handling
         self.space.on_collision(0, 0, post_solve=self._handle_collision)
