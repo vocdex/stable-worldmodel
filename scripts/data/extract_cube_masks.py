@@ -1,28 +1,22 @@
-"""Extract object segmentation masks for OGBench Cube dataset via MuJoCo.
+"""Rebuild OGBench Cube H5 with re-rendered RGB pixels and segmentation masks.
 
-Replays qpos/qvel from the H5 dataset through the simulator and renders
-per-pixel segmentation masks.  Three semantic classes:
-    0 = background (floor, walls, target ghost)
-    1 = cube
-    2 = robot arm (UR5e + Robotiq gripper)
+Reads qpos/qvel from an original cube H5, replays every timestep through
+MuJoCo, and writes a new H5 containing:
 
-Writes a new 'segmentation' dataset (uint8, shape (N, H, W)) into the
-same H5 file.  Resolution defaults to the pixel size stored in the H5
-but can be overridden with --size (e.g. --size 256 for 256x256).
+- `pixels` re-rendered at the chosen resolution (default 256x256),
+  blosc/zstd compressed to match the original codec.
+- `segmentation` rendered at the same resolution, gzip compressed.
+  Three semantic classes:
+      0 = background (floor, walls, target ghost)
+      1 = cube
+      2 = robot arm (UR5e + Robotiq gripper)
+- All other datasets (qpos, qvel, actions, observations, episode metadata,
+  etc.) copied verbatim from the input.
 
 Usage:
     MUJOCO_GL=egl python scripts/data/extract_cube_masks.py \
-        --h5-path ~/.stable_worldmodel/cube_single/cube_single_expert.h5
-
-    # Also re-render RGB without shadows:
-    MUJOCO_GL=egl python scripts/data/extract_cube_masks.py \
-        --h5-path ~/.stable_worldmodel/cube_single/cube_single_expert.h5 \
-        --no-shadow
-
-    # Render at 256x256 instead:
-    MUJOCO_GL=egl python scripts/data/extract_cube_masks.py \
-        --h5-path ~/.stable_worldmodel/cube_single/cube_single_expert.h5 \
-        --size 256 --no-shadow
+        --in-path  ~/.stable_worldmodel/cube_single/cube_single_expert.h5 \
+        --out-path ~/.stable_worldmodel/cube_single/cube_single_expert_256.h5
 """
 import argparse
 import os
@@ -30,7 +24,7 @@ import os
 os.environ.setdefault('MUJOCO_GL', 'egl')
 
 import h5py
-import hdf5plugin  # noqa: F401
+import hdf5plugin
 import mujoco
 import numpy as np
 from scipy.ndimage import binary_dilation
@@ -56,20 +50,20 @@ def build_geom_to_label(model):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--h5-path', required=True)
-    parser.add_argument('--size', type=int, default=None,
-                        help='render resolution (default: match pixels in H5)')
-    parser.add_argument('--no-shadow', action='store_true',
-                        help='re-render RGB pixels with shadows disabled')
-    parser.add_argument('--batch', type=int, default=1000,
-                        help='timesteps to buffer before flushing to disk')
-    args = parser.parse_args()
+    p = argparse.ArgumentParser()
+    p.add_argument('--in-path', required=True)
+    p.add_argument('--out-path', required=True)
+    p.add_argument('--size', type=int, default=256,
+                   help='render resolution (default: 256)')
+    p.add_argument('--no-shadow', action='store_true',
+                   help='disable shadows when rendering pixels')
+    p.add_argument('--batch', type=int, default=500,
+                   help='frames buffered before flushing to disk')
+    p.add_argument('--gzip-level', type=int, default=6,
+                   help='gzip level for segmentation')
+    args = p.parse_args()
 
-    with h5py.File(args.h5_path, 'r') as f:
-        h, w = f['pixels'].shape[1], f['pixels'].shape[2]
-    if args.size is not None:
-        h = w = args.size
+    h = w = args.size
 
     env = CubeEnv(
         env_type='single',
@@ -89,68 +83,61 @@ def main():
         env._scene_option.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = False
     lut = build_geom_to_label(env._model)
 
-    seg_name = 'segmentation' if args.size is None else f'segmentation_{args.size}'
-    px_name = ('pixels_noshadow' if args.size is None
-               else f'pixels_noshadow_{args.size}') if args.no_shadow else None
+    chunk_px = (min(args.batch, 64), h, w, 3)
+    chunk_seg = (min(args.batch, 64), h, w)
 
-    with h5py.File(args.h5_path, 'a') as f:
-        n = f['qpos'].shape[0]
+    with h5py.File(args.in_path, 'r') as fin, h5py.File(args.out_path, 'w') as fout:
+        n = fin['qpos'].shape[0]
 
-        if seg_name in f:
-            del f[seg_name]
-        seg_ds = f.create_dataset(
-            seg_name, shape=(n, h, w), dtype=np.uint8,
-            chunks=(min(args.batch, n), h, w),
+        # Copy all datasets except `pixels` (which we rerender).
+        for name in fin.keys():
+            if name == 'pixels':
+                continue
+            fin.copy(name, fout)
+            print(f'copied {name}')
+
+        px_ds = fout.create_dataset(
+            'pixels', shape=(n, h, w, 3), dtype=np.uint8,
+            chunks=chunk_px,
+            **hdf5plugin.Blosc(cname='zstd', clevel=5,
+                               shuffle=hdf5plugin.Blosc.SHUFFLE),
+        )
+        seg_ds = fout.create_dataset(
+            'segmentation', shape=(n, h, w), dtype=np.uint8,
+            chunks=chunk_seg,
+            compression='gzip', compression_opts=args.gzip_level, shuffle=True,
         )
 
-        if px_name:
-            if px_name in f:
-                del f[px_name]
-            px_ds = f.create_dataset(
-                px_name, shape=(n, h, w, 3), dtype=np.uint8,
-                chunks=(min(args.batch, n), h, w, 3),
-            )
-            px_buf = np.empty((args.batch, h, w, 3), dtype=np.uint8)
-
+        px_buf = np.empty((args.batch, h, w, 3), dtype=np.uint8)
         seg_buf = np.empty((args.batch, h, w), dtype=np.uint8)
         buf_idx = 0
 
-        for i in tqdm.tqdm(range(n), desc='Rendering'):
-            qpos = f['qpos'][i]
-            qvel = f['qvel'][i]
-            env.set_state(qpos, qvel)
+        for i in tqdm.tqdm(range(n), desc=f'Rendering @ {h}x{w}'):
+            env.set_state(fin['qpos'][i], fin['qvel'][i])
 
-            raw = env.render(segmentation=True)  # (H, W, 2): [geom_id, geom_type]
-            geom_ids = raw[:, :, 0]
-            geom_ids = np.clip(geom_ids, -1, len(lut) - 1)
+            raw = env.render(segmentation=True)
+            geom_ids = np.clip(raw[:, :, 0], -1, len(lut) - 1)
             mask = np.where(geom_ids >= 0, lut[geom_ids], LABEL_BG)
-            # Relabel stray arm pixels at cube border (z-fighting residuals).
             cube_dilated = binary_dilation(mask == LABEL_CUBE)
             mask[(mask == LABEL_ARM) & cube_dilated] = LABEL_CUBE
             seg_buf[buf_idx] = mask
 
-            if px_name:
-                px_buf[buf_idx] = env.render()
+            px_buf[buf_idx] = env.render()
 
             buf_idx += 1
-
             if buf_idx == args.batch:
                 start = i - args.batch + 1
+                px_ds[start:start + args.batch] = px_buf
                 seg_ds[start:start + args.batch] = seg_buf
-                if px_name:
-                    px_ds[start:start + args.batch] = px_buf
                 buf_idx = 0
 
         if buf_idx > 0:
             start = n - buf_idx
+            px_ds[start:n] = px_buf[:buf_idx]
             seg_ds[start:n] = seg_buf[:buf_idx]
-            if px_name:
-                px_ds[start:n] = px_buf[:buf_idx]
 
     env.close()
-    print(f'Wrote {seg_name} ({n}, {h}, {w}) to {args.h5_path}')
-    if px_name:
-        print(f'Wrote {px_name} ({n}, {h}, {w}, 3) to {args.h5_path}')
+    print(f'Done. Wrote pixels ({n}, {h}, {w}, 3) and segmentation ({n}, {h}, {w}) to {args.out_path}')
 
 
 if __name__ == '__main__':
