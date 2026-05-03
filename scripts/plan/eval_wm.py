@@ -199,6 +199,7 @@ def run(cfg: DictConfig):
         ),
         video_path=results_path,
         variation_overrides=variation_overrides,
+        stop_on_success=cfg.eval.get('stop_on_success', False),
     )
     end_time = time.time()
 

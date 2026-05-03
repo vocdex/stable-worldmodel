@@ -766,6 +766,7 @@ class World:
         save_video: bool = True,
         video_path: str | Path = './',
         variation_overrides: dict | None = None,
+        stop_on_success: bool = False,
     ) -> dict:
         """Evaluate the policy starting from states sampled from a dataset.
 
@@ -981,6 +982,7 @@ class World:
         )
 
         # run normal evaluation for eval_budget and record video
+        steps_used = eval_budget
         for i in range(eval_budget):
             video_frames[:, i] = self.infos['pixels'][:, -1]
             self.infos.update(deepcopy(goal_step))
@@ -991,7 +993,16 @@ class World:
             # for auto-reset
             self.envs.unwrapped._autoreset_envs = np.zeros((self.num_envs,))
 
-        video_frames[:, -1] = self.infos['pixels'][:, -1]
+            if stop_on_success and results['episode_successes'].all():
+                # All envs in this batch have reached the goal at least once;
+                # no further env steps will change the success metric. Stop
+                # so the video reflects the actual planning trajectory rather
+                # than post-success drift. Tail of `video_frames` past
+                # `steps_used` is left uninitialized — capped at write time.
+                steps_used = i + 1
+                break
+
+        video_frames[:, steps_used - 1] = self.infos['pixels'][:, -1]
 
         n_episodes = len(episodes_idx)
 
@@ -1014,7 +1025,7 @@ class World:
                     codec='libx264',
                 )
                 goals = np.vstack([target_frames[i, -1], target_frames[i, -1]])
-                for t in range(eval_budget):
+                for t in range(steps_used):
                     stacked_frame = np.vstack(
                         [video_frames[i, t], target_frames[i, t % target_len]]
                     )

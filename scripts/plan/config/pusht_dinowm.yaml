@@ -37,6 +37,7 @@ eval:
   img_size: 224
   dataset_name: pusht_expert_train
   variation_overrides: null  # set via override, e.g. eval.variation_overrides='{variation: [block.color], variation_values: {block.color: [255,0,0]}}'
+  stop_on_success: true       # break the eval loop once every env has reached the goal at least once (truncates rollout videos to the actual planning trajectory)
   callables:
     - method: _set_state
       args:
