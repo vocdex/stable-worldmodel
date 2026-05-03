@@ -37,6 +37,42 @@ import yaml
 from einops import rearrange
 
 
+def _patch_vit_attention_to_sdpa(vit_mod) -> None:
+    """Replace DINO-WM's manual softmax attention with F.scaled_dot_product_attention.
+
+    The original Attention.forward (vit.py:60-80) materializes a full
+    (B, heads, T, T) attention matrix, which at planning scale (B*N up to
+    several thousand, T = num_hist * num_patches = 588 for PushT) becomes
+    the dominant memory and time cost. SDPA dispatches to FlashAttention
+    on Ampere/Ada when shapes/dtypes allow, eliminating the full matrix.
+
+    Idempotent: only patches if the original implementation is in place.
+    """
+    if getattr(vit_mod.Attention.forward, '_swm_sdpa_patched', False):
+        return
+
+    def forward(self, x):
+        T = x.size(1)
+        x = self.norm(x)
+        qkv = self.to_qkv(x).chunk(3, dim=-1)
+        q, k, v = (
+            rearrange(t, 'b n (h d) -> b h n d', h=self.heads) for t in qkv
+        )
+        # Original mask is 1=attend, 0=block; SDPA expects bool with True=attend.
+        attn_mask = self.bias[:, :, :T, :T].to(torch.bool)
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=attn_mask,
+            dropout_p=self.dropout.p if self.training else 0.0,
+            is_causal=False,
+        )
+        out = rearrange(out, 'b h n d -> b n (h d)')
+        return self.to_out(out)
+
+    forward._swm_sdpa_patched = True
+    vit_mod.Attention.forward = forward
+
+
 def load_dino_wm_external(
     ckpt_dir: str | Path,
     dino_wm_src: str | Path = '/home/nazirjon/Desktop/dino_wm',
@@ -97,6 +133,9 @@ def load_dino_wm_external(
     # / static analyzers can't see them; that's expected.
     from models.dino import DinoV2Encoder  # type: ignore[import-not-found]
     from models.visual_world_model import VWorldModel  # type: ignore[import-not-found]
+    from models import vit as _vit_mod  # type: ignore[import-not-found]
+
+    _patch_vit_attention_to_sdpa(_vit_mod)
 
     encoder = DinoV2Encoder(name=enc_name, feature_key='x_norm_patchtokens')
 
