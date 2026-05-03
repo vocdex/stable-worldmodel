@@ -939,6 +939,18 @@ class World:
         # expend all data to the right shape (x, y, (original_shape))
         shape_prefix = self.infos['pixels'].shape[:2]
 
+        # When the eval applies a variation override, the H5 'goal' frame was
+        # rendered without the variation — using it as the planner's target
+        # gives the planner an appearance-mismatched goal (modified-current vs
+        # unmodified-goal) and inflates the cost spuriously. Re-pull the goal
+        # frame from each env, where _set_goal_state has just re-rendered it
+        # with the active variation against the H5 numerical goal_state.
+        if variation_overrides is not None and 'goal' in goal_step:
+            rerendered = np.stack([
+                env.unwrapped._goal for env in self.envs.unwrapped.envs
+            ])
+            goal_step['goal'] = rerendered
+
         # TODO get the data from the previous step in the dataset for history
         init_step = {
             k: np.broadcast_to(v[:, None, ...], shape_prefix + v.shape[1:])
@@ -953,7 +965,11 @@ class World:
         self.infos.update(deepcopy(init_step))
         self.infos.update(deepcopy(goal_step))
 
-        if 'goal' in goal_step and 'goal' in self.infos:
+        if (
+            variation_overrides is None
+            and 'goal' in goal_step
+            and 'goal' in self.infos
+        ):
             assert np.allclose(self.infos['goal'], goal_step['goal']), (
                 'Goal info does not match'
             )

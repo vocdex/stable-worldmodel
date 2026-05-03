@@ -554,7 +554,60 @@ class PushT(gym.Env):
         self.space.step(self.dt)
 
     def _set_goal_state(self, goal_state):
+        """Set goal pose AND re-render `self._goal` under the active variation.
+
+        Without the re-render, robustness evals that swap goal_state via callable
+        (e.g. CJEPA's future-step goal from H5) leave `self._goal` stale — it
+        would still hold the random goal image rendered at reset() time, which
+        also wouldn't match the H5 numerical goal. We render the goal pose
+        through the live env (with current variation applied: colors, scales,
+        shapes, distractors, ...), then restore the agent/block pose.
+
+        Sets body fields directly (no `_set_state`, no `space.step`) so the
+        episode's start state is bit-for-bit unchanged — `_set_state` advances
+        physics by one dt at the end, and using it here would drift the start
+        state by 2 physics ticks on every callable, perturbing planner inputs.
+
+        IMPORTANT: pymunk `Body.position` readback depends on `Body.angle` when
+        the body has a non-trivial center_of_gravity (the PushT T-block does).
+        Setting position with the wrong angle gives a different world location
+        on readback. So when restoring, set angle FIRST, then position.
+        """
         self.goal_state = goal_state
+        gs = goal_state.tolist() if hasattr(goal_state, 'tolist') else list(goal_state)
+        # Snapshot current body fields for restore.
+        snap = (
+            tuple(self.agent.position),
+            tuple(self.agent.velocity),
+            tuple(self.block.position),
+            float(self.block.angle),
+            tuple(self.block.velocity),
+            float(self.block.angular_velocity),
+        )
+        # Place bodies at goal pose for rendering only — set block angle BEFORE
+        # block position so the pymunk transform is consistent at the new pose.
+        self.block.angle = gs[4]
+        self.agent.position = gs[:2]
+        self.block.position = gs[2:4]
+        if len(gs) == 7:
+            self.agent.velocity = tuple(gs[-2:])
+        # CRITICAL: pymunk's space.debug_draw (used inside self.render) uses
+        # cached shape transforms in the spatial hash. Body.position assignment
+        # is immediate for body.local_to_world, but the cached shape transforms
+        # only refresh on space.step or explicit reindex. Without reindex the
+        # render would silently show the OLD pose.
+        self.space.reindex_shapes_for_body(self.agent)
+        self.space.reindex_shapes_for_body(self.block)
+        self._goal = self.render()
+        # Restore — angle FIRST, then position (see docstring) — and reindex.
+        self.block.angle = snap[3]
+        self.agent.position = snap[0]
+        self.agent.velocity = snap[1]
+        self.block.position = snap[2]
+        self.block.velocity = snap[4]
+        self.block.angular_velocity = snap[5]
+        self.space.reindex_shapes_for_body(self.agent)
+        self.space.reindex_shapes_for_body(self.block)
 
     def _setup(self):
         ## create the space with physics
