@@ -34,6 +34,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import yaml
+from einops import rearrange
 
 
 def load_dino_wm_external(
@@ -41,6 +42,7 @@ def load_dino_wm_external(
     dino_wm_src: str | Path = '/home/nazirjon/Desktop/dino_wm',
     encoder_name: str | None = None,
     alpha: float = 1.0,
+    rollout_chunk: int = 64,
 ) -> 'DinoWMAdapter':
     """Load an original DINO-WM checkpoint and wrap it as a planner-compatible model.
 
@@ -139,6 +141,7 @@ def load_dino_wm_external(
         action_input_dim=action_input_dim,
         proprio_input_dim=proprio_input_dim,
         alpha=alpha,
+        rollout_chunk=rollout_chunk,
     )
 
 
@@ -157,6 +160,7 @@ class DinoWMAdapter(nn.Module):
         action_input_dim: int,
         proprio_input_dim: int,
         alpha: float = 1.0,
+        rollout_chunk: int = 64,
     ) -> None:
         super().__init__()
         self.vwm = vwm
@@ -166,6 +170,11 @@ class DinoWMAdapter(nn.Module):
         self.action_input_dim = action_input_dim
         self.proprio_input_dim = proprio_input_dim
         self.alpha = alpha
+        # DINO-WM's predictor materializes a full (B*N, heads, T*P, T*P)
+        # attention matrix per layer — at T=3, P=196 each row is 588 tokens, so
+        # one float32 attention map is ~6.6 GB at N=300. Chunk the rollout
+        # across N so peak memory scales with rollout_chunk instead of N.
+        self.rollout_chunk = rollout_chunk
         # Set by eval_wm.py:103 for prejepa; ignored here because DINO-WM
         # resizes the image before encoding rather than interpolating positional
         # embeddings.
@@ -234,6 +243,20 @@ class DinoWMAdapter(nn.Module):
         # history — collapse the time dim down to 1 with the last frame.
         goal = _strip(info_dict['goal']).to(device)[:, -1:]
         goal_proprio = _strip(info_dict['goal_proprio']).to(device)[:, -1:]
+
+        # If world.history_size < ckpt num_hist (e.g. history_size=1 against a
+        # num_hist=3 ckpt), pad-repeat the last available frame. The predictor
+        # was trained on a fixed 3-frame window (pos_embedding sized for
+        # num_hist*num_patches tokens) and would error otherwise.
+        T_avail = pixels.shape[1]
+        if T_avail < self.num_hist:
+            pad = self.num_hist - T_avail
+            pixels = torch.cat(
+                [pixels[:, :1].expand(-1, pad, -1, -1, -1), pixels], dim=1
+            )
+            proprio = torch.cat(
+                [proprio[:, :1].expand(-1, pad, -1), proprio], dim=1
+            )
         if A != self.action_input_dim:
             raise ValueError(
                 f'action_candidates last dim {A} != ckpt action_encoder.in_chans '
@@ -253,9 +276,29 @@ class DinoWMAdapter(nn.Module):
         pixels_h = pixels[:, -self.num_hist:].float()
         proprio_h = proprio[:, -self.num_hist:].float()
 
-        # Expand history across N candidates.
-        pixels_h_exp = pixels_h.repeat_interleave(N, dim=0)   # (B*N, num_hist, 3, 224, 224)
-        proprio_h_exp = proprio_h.repeat_interleave(N, dim=0) # (B*N, num_hist, proprio_dim)
+        # CRITICAL PERF/MEMORY: encode the visual history ONCE per env (B *
+        # num_hist forward passes through DINO), then expand the resulting
+        # latent across N samples. Without this, vwm.rollout would re-encode
+        # B * N * num_hist frames per CEM iteration — for N=300 that's a 300x
+        # blow-up, and DINOv2 activations OOM on 16GB cards. Pass the result
+        # via the `features` key, which encode_obs uses to skip the encoder
+        # (visual_world_model.py:125-127).
+        v_in = self.vwm.encoder_transform(
+            rearrange(pixels_h, 'b t c h w -> (b t) c h w')
+        )
+        v_emb_b = self.vwm.encoder.forward(v_in)
+        v_emb_b = rearrange(v_emb_b, '(b t) p d -> b t p d', b=B)
+
+        # Expand history latents and proprio across N candidates.
+        v_emb_exp = v_emb_b.repeat_interleave(N, dim=0)        # (B*N, num_hist, P, D)
+        proprio_h_exp = proprio_h.repeat_interleave(N, dim=0)  # (B*N, num_hist, proprio_dim)
+        # `visual` key is read-only when `features` is present, but rollout's
+        # signature still touches `obs_0['visual'].shape[1]` for num_obs_init.
+        # Provide a tiny placeholder of the right shape (no allocation cost
+        # since num_hist is small).
+        pixels_shape_proxy = torch.empty(
+            B * N, self.num_hist, 0, device=device, dtype=v_emb_exp.dtype
+        )
 
         # Build the act sequence VWorldModel.rollout expects:
         #   act of shape (B*N, num_hist + H, action_dim).
@@ -270,30 +313,34 @@ class DinoWMAdapter(nn.Module):
         )
         act_full = torch.cat([zero_past, candidates_flat], dim=1)
 
-        # Roll out. z_obses['visual']:  (B*N, num_hist + H + 1, P, D_visual)
-        #          z_obses['proprio']: (B*N, num_hist + H + 1, proprio_dim)
-        # The trailing index is the final unconditional next-state prediction
-        # (i.e. the state after applying all H candidate actions starting from
-        # the current frame).
-        z_obses, _ = self.vwm.rollout(
-            obs_0={'visual': pixels_h_exp, 'proprio': proprio_h_exp},
-            act=act_full,
-        )
+        # Expand goal across N once, then slice per chunk.
+        z_goal_visual_full = z_goal['visual'].repeat_interleave(N, dim=0)
+        z_goal_proprio_full = z_goal['proprio'].repeat_interleave(N, dim=0)
 
-        z_pred_visual = z_obses['visual'][:, -1:]    # (B*N, 1, P, D_visual)
-        z_pred_proprio = z_obses['proprio'][:, -1:]  # (B*N, 1, proprio_dim)
+        BN = B * N
+        chunk = max(1, self.rollout_chunk)
+        cost_chunks = []
+        for s in range(0, BN, chunk):
+            e = min(s + chunk, BN)
+            v_chunk = v_emb_exp[s:e]
+            p_chunk = proprio_h_exp[s:e]
+            a_chunk = act_full[s:e]
+            proxy = torch.empty(
+                e - s, self.num_hist, 0, device=device, dtype=v_chunk.dtype
+            )
+            z_obses, _ = self.vwm.rollout(
+                obs_0={'visual': proxy, 'proprio': p_chunk, 'features': v_chunk},
+                act=a_chunk,
+            )
+            z_pred_v = z_obses['visual'][:, -1:]
+            z_pred_p = z_obses['proprio'][:, -1:]
+            visual_loss = F.mse_loss(
+                z_pred_v, z_goal_visual_full[s:e], reduction='none'
+            ).mean(dim=tuple(range(1, z_pred_v.ndim)))
+            proprio_loss = F.mse_loss(
+                z_pred_p, z_goal_proprio_full[s:e], reduction='none'
+            ).mean(dim=tuple(range(1, z_pred_p.ndim)))
+            cost_chunks.append(visual_loss + self.alpha * proprio_loss)
 
-        # Expand goal across N to align with predictions.
-        z_goal_visual = z_goal['visual'].repeat_interleave(N, dim=0)
-        z_goal_proprio = z_goal['proprio'].repeat_interleave(N, dim=0)
-
-        # DINO-WM objective_fn_last: per-sample MSE averaged over all non-batch dims.
-        visual_loss = F.mse_loss(
-            z_pred_visual, z_goal_visual, reduction='none'
-        ).mean(dim=tuple(range(1, z_pred_visual.ndim)))
-        proprio_loss = F.mse_loss(
-            z_pred_proprio, z_goal_proprio, reduction='none'
-        ).mean(dim=tuple(range(1, z_pred_proprio.ndim)))
-
-        cost = visual_loss + self.alpha * proprio_loss  # (B*N,)
+        cost = torch.cat(cost_chunks, dim=0)
         return cost.view(B, N)

@@ -7,7 +7,7 @@ world:
   env_name: swm/PushT-v1
   num_envs: ${eval.num_eval}
   max_episode_steps: ???   # filled by eval_wm.py = 2 * eval.eval_budget
-  history_size: 3          # MUST equal DINO-WM num_hist; pusht.yaml uses 1
+  history_size: 1          # MUST equal DINO-WM num_hist; pusht.yaml uses 1
   frame_skip: 1
 
 dataset:
@@ -23,7 +23,8 @@ seed: 42
 policy_kind: dino_wm_external
 policy: /home/nazirjon/Downloads/outputs/outputs/pusht
 dino_wm_src: /home/nazirjon/Desktop/dino_wm
-dino_wm_alpha: 1.0          # paper sweeps {0.1, 1.0}
+dino_wm_alpha: 1.0           # paper sweeps {0.1, 1.0}
+dino_wm_rollout_chunk: 64    # CEM batch chunk inside the adapter; lower → less VRAM, slower
 
 plan_config:
   horizon: 5
