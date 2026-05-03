@@ -96,7 +96,20 @@ def run(cfg: DictConfig):
     policy = cfg.get('policy', 'random')
 
     if policy != 'random':
-        model = swm.wm.utils.load_pretrained(cfg.policy)
+        if cfg.get('policy_kind') == 'dino_wm_external':
+            from stable_worldmodel.wm.dino_wm_external import (
+                load_dino_wm_external,
+            )
+
+            model = load_dino_wm_external(
+                cfg.policy,
+                dino_wm_src=cfg.get(
+                    'dino_wm_src', '/home/nazirjon/Desktop/dino_wm'
+                ),
+                alpha=cfg.get('dino_wm_alpha', 1.0),
+            )
+        else:
+            model = swm.wm.utils.load_pretrained(cfg.policy)
         model = model.to('cuda')
         model = model.eval()
         model.requires_grad_(False)
