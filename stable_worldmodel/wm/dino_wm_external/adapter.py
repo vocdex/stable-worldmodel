@@ -91,8 +91,10 @@ def load_dino_wm_external(
     ck = torch.load(ckpt_path, map_location='cpu', weights_only=False)
 
     enc_name = encoder_name or hydra_cfg['encoder']['name']
-    from models.dino import DinoV2Encoder
-    from models.visual_world_model import VWorldModel
+    # Imports are dynamic — resolved via the sys.path insertion above. Pylance
+    # / static analyzers can't see them; that's expected.
+    from models.dino import DinoV2Encoder  # type: ignore[import-not-found]
+    from models.visual_world_model import VWorldModel  # type: ignore[import-not-found]
 
     encoder = DinoV2Encoder(name=enc_name, feature_key='x_norm_patchtokens')
 
@@ -209,16 +211,29 @@ class DinoWMAdapter(nn.Module):
         """
         device = self.device
 
-        pixels = info_dict['pixels'].to(device)
-        proprio = info_dict['proprio'].to(device)
-        goal = info_dict['goal'].to(device)
-        goal_proprio = info_dict['goal_proprio'].to(device)
         candidates = action_candidates.to(device)
-
-        B, _T, _C, _H_im, _W_im = pixels.shape
+        B = candidates.shape[0]
         N = candidates.shape[1]
         H = candidates.shape[2]
         A = candidates.shape[3]
+
+        # CEMSolver pre-expands info tensors along the sample dim before calling
+        # get_cost (cem.py:128-135), so info[k] is shaped (B, N, T, ...) instead
+        # of (B, T, ...). Per-env observations are identical across samples —
+        # only action_candidates differ — so collapse with [:, 0] (mirrors
+        # PreJEPA.rollout / get_cost which do the same).
+        def _strip(x):
+            if x.shape[0] == B and x.ndim >= 2 and x.shape[1] == N:
+                return x[:, 0]
+            return x
+
+        pixels = _strip(info_dict['pixels']).to(device)
+        proprio = _strip(info_dict['proprio']).to(device)
+        # MegaWrapper stacks observations to history_size, including 'goal'
+        # (replicates the same goal frame). The goal is one image, not a
+        # history — collapse the time dim down to 1 with the last frame.
+        goal = _strip(info_dict['goal']).to(device)[:, -1:]
+        goal_proprio = _strip(info_dict['goal_proprio']).to(device)[:, -1:]
         if A != self.action_input_dim:
             raise ValueError(
                 f'action_candidates last dim {A} != ckpt action_encoder.in_chans '
@@ -260,7 +275,7 @@ class DinoWMAdapter(nn.Module):
         # The trailing index is the final unconditional next-state prediction
         # (i.e. the state after applying all H candidate actions starting from
         # the current frame).
-        z_obses, _z_full = self.vwm.rollout(
+        z_obses, _ = self.vwm.rollout(
             obs_0={'visual': pixels_h_exp, 'proprio': proprio_h_exp},
             act=act_full,
         )

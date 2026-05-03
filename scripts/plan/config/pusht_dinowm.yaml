@@ -36,6 +36,7 @@ eval:
   eval_budget: 50
   img_size: 224
   dataset_name: pusht_expert_train
+  variation_overrides: null  # set via override, e.g. eval.variation_overrides='{variation: [block.color], variation_values: {block.color: [255,0,0]}}'
   callables:
     - method: _set_state
       args:

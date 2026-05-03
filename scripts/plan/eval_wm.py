@@ -170,6 +170,23 @@ def run(cfg: DictConfig):
 
     world.set_policy(policy)
 
+    variation_overrides = cfg.eval.get('variation_overrides')
+    if variation_overrides is not None:
+        variation_overrides = OmegaConf.to_container(
+            variation_overrides, resolve=True
+        )
+        # YAML overrides come in as lists; the env's variation_space stores
+        # numpy arrays (with specific dtypes — RGBBox is uint8, position boxes
+        # are float64, etc.), and Box.contains is dtype-strict, so coerce each
+        # list value to the matching space's dtype before passing through.
+        vv = variation_overrides.get('variation_values') or {}
+        for k, v in vv.items():
+            if isinstance(v, list):
+                space = world.single_variation_space
+                for part in k.split('.'):
+                    space = space[part]
+                vv[k] = np.array(v, dtype=space.dtype)
+
     start_time = time.time()
     metrics = world.evaluate_from_dataset(
         dataset,
@@ -181,6 +198,7 @@ def run(cfg: DictConfig):
             cfg.eval.get('callables'), resolve=True
         ),
         video_path=results_path,
+        variation_overrides=variation_overrides,
     )
     end_time = time.time()
 
