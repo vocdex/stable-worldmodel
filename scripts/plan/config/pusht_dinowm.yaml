@@ -27,18 +27,19 @@ dino_wm_alpha: 1.0           # paper sweeps {0.1, 1.0}
 dino_wm_rollout_chunk: 64    # CEM batch chunk inside the adapter; lower → less VRAM, slower
 
 plan_config:
-  horizon: 5
-  receding_horizon: 5
+  horizon: 5                # cjepa canonical
+  receding_horizon: 5       # cjepa canonical
   action_block: 5           # frameskip — must equal DINO-WM frameskip
 
 eval:
   num_eval: 50
-  goal_offset_steps: 5      # DINO-WM plan_settings.goal_H = 5
+  # Match cjepa/src/plan/config.yaml + scripts/pusht/plan_wm.sh.
+  goal_offset_steps: 25
   eval_budget: 50
   img_size: 224
   dataset_name: pusht_expert_train
   variation_overrides: null  # set via override, e.g. eval.variation_overrides='{variation: [block.color], variation_values: {block.color: [255,0,0]}}'
-  stop_on_success: true       # break the eval loop once every env has reached the goal at least once (truncates rollout videos to the actual planning trajectory)
+  stop_on_success: false      # match cjepa: run full eval_budget regardless
   callables:
     - method: _set_state
       args:
