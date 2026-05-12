@@ -1,0 +1,46 @@
+defaults:
+  - _self_
+  - override hydra/launcher: submitit_slurm
+
+hydra:
+  output_subdir: null
+  mode: MULTIRUN
+  launcher:
+    max_num_timeout: 999
+    cpus_per_task: 8
+    mem_gb: 256
+    timeout_min: 1440
+    partition: long-cpu
+    signal_delay_s: 120
+  run:
+    dir: .
+
+# ---- Identity / split selection ----
+# Set both lists per dataset. `objects` is the env's "available identities"
+# (must be consistent across all datasets a single SC model will see).
+# `enabled_objects` picks which of those are *active* per episode.
+objects: [A, B, C, D, E, F]
+enabled_objects: [A, B]
+dataset_name: pusht_multi_AB
+
+# ---- Collection scale ----
+num_traj: 10000
+num_shards: 10
+seed: 3072
+cache_dir: null
+
+# ---- World wrapper ----
+# max_episode_steps scales with k: rule of thumb 60 + 60*k. With k=2 → 180.
+world:
+  num_envs: 8
+  max_episode_steps: 180
+  image_shape: [224, 224]
+
+# ---- Expert policy ----
+policy:
+  dist_constraint: 100
+  switch_every: 10
+  # Probability of focusing on a midpoint between two enabled objects.
+  # Drives pairwise contact sampling (needed for RQ2). 0 reproduces the
+  # single-object weak-policy behavior on whichever object is active.
+  p_wedge: 0.3
