@@ -51,7 +51,10 @@ OBJECT_LIBRARY: dict[str, ObjectSpec] = {
     'C': ObjectSpec(shape='o',         color='SeaGreen',       scale=40, mass=0.5, friction=0.3, has_orientation=False, label=4),
     'D': ObjectSpec(shape='square',    color='Purple',         scale=30, mass=2.0, friction=1.5, has_orientation=True,  label=5),
     'E': ObjectSpec(shape='+',         color='Crimson',        scale=30, mass=1.0, friction=1.0, has_orientation=True,  label=6),
-    'F': ObjectSpec(shape='L',         color='RoyalBlue',      scale=30, mass=1.0, friction=1.0, has_orientation=True,  label=7),
+    # F intentionally avoids RoyalBlue — that's the agent's default color,
+    # and visual overlap would make it impossible to tell pusher from F by
+    # color alone (segmentation labels are still distinct: agent=1, F=7).
+    'F': ObjectSpec(shape='L',         color='Gold',           scale=30, mass=1.0, friction=1.0, has_orientation=True,  label=7),
 }
 
 

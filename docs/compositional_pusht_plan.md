@@ -10,6 +10,22 @@ slot-WM). No patch-encoder (DINOv2) baseline. The encoder is trained
 once on the full visual diversity and held fixed; the world model is the
 only variable.
 
+**Slot accounting.** In an object-centric setting the *agent* and the
+*background* are also entities the encoder must bind a slot to, so a
+scene with `k` manipulable objects actually requires `k + 2` slots
+(agent + bg + each manipulable). Throughout this doc `k` refers to the
+number of non-agent, non-background objects:
+
+| Split   | k | Slots needed              |
+|---------|---|---------------------------|
+| AB      | 2 | agent, bg, A, B           |
+| BC      | 2 | agent, bg, B, C           |
+| ABC     | 3 | agent, bg, A, B, C        |
+| k=6     | 6 | agent, bg, A, B, C, D, E, F |
+
+SlotContrast is trained with `num_slots = 8` (= max k + 2) for headroom
+across every split.
+
 ---
 
 ## 1. Research questions
@@ -62,7 +78,7 @@ OBJECT_LIBRARY = {
     'C': {shape: 'o',      color: SeaGreen,       scale: 30, mass: 0.5, friction: 0.3, has_orientation: False, label: 4},
     'D': {shape: 'square', color: Purple,         scale: 30, mass: 2.0, friction: 1.5, has_orientation: True,  label: 5},
     'E': {shape: '+',      color: Crimson,        scale: 30, mass: 1.0, friction: 1.0, has_orientation: True,  label: 6},
-    'F': {shape: 'L',      color: RoyalBlue,      scale: 30, mass: 1.0, friction: 1.0, has_orientation: True,  label: 7},
+    'F': {shape: 'L',      color: Gold,           scale: 30, mass: 1.0, friction: 1.0, has_orientation: True,  label: 7},
 }
 ```
 
