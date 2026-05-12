@@ -414,7 +414,15 @@ class PushTMulti(gym.Env):
         self.control_hz = self.metadata['render_fps']
         self.k_p, self.k_v = 100, 20
         self.dt = 0.01
-        self._damping = 0.85  # see plan §3.4
+        # Pymunk damping = fraction of velocity *retained* per second of sim
+        # (formula: v_new = v * damping**dt). With dt=0.01 and 10 sub-steps
+        # per env-step, damping=0.1 → ~20% velocity loss per env-step, which
+        # makes bodies come to rest within ~5 env-steps of leaving contact —
+        # the tabletop-friction feel we want. Original PushT uses 0 (no
+        # damping, objects coast forever) but it doesn't show because the
+        # agent stays in contact with the single block. With several lighter
+        # objects and a fast-switching focus policy that breaks down.
+        self._damping = 0.1
 
         # Success tolerances
         self.success_pos_tol = float(success_pos_tol)
