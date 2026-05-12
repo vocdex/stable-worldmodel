@@ -82,16 +82,32 @@ def agent_bounding_radius(agent_scale: float) -> float:
     return float(0.375 * agent_scale)
 
 
+# Physics chosen so every identity has a distinct (mass, friction)
+# signature — the WM has to bind dynamics to identity, not just appearance.
+# Roughly: A is the baseline; B is a heavier elongated bar; C is light and
+# slippery; D is heavy and grippy; E is light but high-friction (sticks
+# where pushed); F is medium-heavy and slick.
+#
+# All identities are non-circular polygons so the only circular body in
+# any scene is the pusher (agent) — keeps the pusher visually unique.
 OBJECT_LIBRARY: dict[str, ObjectSpec] = {
-    'A': ObjectSpec(shape='T',         color='LightSlateGray', scale=30, mass=1.0, friction=1.0, has_orientation=True,  label=2),
-    'B': ObjectSpec(shape='I',         color='Orange',         scale=30, mass=1.0, friction=1.0, has_orientation=True,  label=3),
-    'C': ObjectSpec(shape='o',         color='SeaGreen',       scale=40, mass=0.5, friction=0.3, has_orientation=False, label=4),
-    'D': ObjectSpec(shape='square',    color='Purple',         scale=30, mass=2.0, friction=1.5, has_orientation=True,  label=5),
-    'E': ObjectSpec(shape='+',         color='Crimson',        scale=30, mass=1.0, friction=1.0, has_orientation=True,  label=6),
+    # A's T-block uses scale=20 (rather than the original PushT default of
+    # 30). The T's stem length is 4*scale, so scale=30 gave a 120-px stem
+    # and a 121-px bounding radius — by far the largest shape in the
+    # library and the dominant constraint in multi-object placement. At
+    # scale=20 the bounding radius drops to ~81 px, comfortably matching
+    # the other identities (42-67 px) so 3-6 object scenes pack easily.
+    'A': ObjectSpec(shape='T',      color='LightSlateGray', scale=20, mass=1.0, friction=1.0, has_orientation=True,  label=2),
+    'B': ObjectSpec(shape='I',      color='Orange',         scale=30, mass=1.5, friction=0.8, has_orientation=True,  label=3),
+    # C is the only Z. Kept light + slippery so it has a distinct
+    # dynamic signature; gains orientation now that it's a polygon.
+    'C': ObjectSpec(shape='Z',      color='SeaGreen',       scale=30, mass=0.5, friction=0.3, has_orientation=True,  label=4),
+    'D': ObjectSpec(shape='square', color='Purple',         scale=30, mass=2.5, friction=1.5, has_orientation=True,  label=5),
+    'E': ObjectSpec(shape='+',      color='Crimson',        scale=30, mass=0.8, friction=1.2, has_orientation=True,  label=6),
     # F intentionally avoids RoyalBlue — that's the agent's default color,
     # and visual overlap would make it impossible to tell pusher from F by
     # color alone (segmentation labels are still distinct: agent=1, F=7).
-    'F': ObjectSpec(shape='L',         color='Gold',           scale=30, mass=1.0, friction=1.0, has_orientation=True,  label=7),
+    'F': ObjectSpec(shape='L',      color='Gold',           scale=30, mass=1.2, friction=0.6, has_orientation=True,  label=7),
 }
 
 

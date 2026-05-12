@@ -73,19 +73,22 @@ LABEL_BG = 0
 LABEL_AGENT = 1
 
 OBJECT_LIBRARY = {
-    'A': {shape: 'T',      color: LightSlateGray, scale: 30, mass: 1.0, friction: 1.0, has_orientation: True,  label: 2},
-    'B': {shape: 'I',      color: Orange,         scale: 30, mass: 1.0, friction: 1.0, has_orientation: True,  label: 3},
-    'C': {shape: 'o',      color: SeaGreen,       scale: 30, mass: 0.5, friction: 0.3, has_orientation: False, label: 4},
-    'D': {shape: 'square', color: Purple,         scale: 30, mass: 2.0, friction: 1.5, has_orientation: True,  label: 5},
-    'E': {shape: '+',      color: Crimson,        scale: 30, mass: 1.0, friction: 1.0, has_orientation: True,  label: 6},
-    'F': {shape: 'L',      color: Gold,           scale: 30, mass: 1.0, friction: 1.0, has_orientation: True,  label: 7},
+    'A': {shape: 'T',      color: LightSlateGray, scale: 30, mass: 1.0, friction: 1.0, has_orientation: True, label: 2},
+    'B': {shape: 'I',      color: Orange,         scale: 30, mass: 1.5, friction: 0.8, has_orientation: True, label: 3},
+    'C': {shape: 'Z',      color: SeaGreen,       scale: 30, mass: 0.5, friction: 0.3, has_orientation: True, label: 4},
+    'D': {shape: 'square', color: Purple,         scale: 30, mass: 2.5, friction: 1.5, has_orientation: True, label: 5},
+    'E': {shape: '+',      color: Crimson,        scale: 30, mass: 0.8, friction: 1.2, has_orientation: True, label: 6},
+    'F': {shape: 'L',      color: Gold,           scale: 30, mass: 1.2, friction: 0.6, has_orientation: True, label: 7},
 }
 ```
 
-Mass/friction (currently hardcoded `mass=1, friction=1` in the existing
-`add_*` constructors) are plumbed through so dynamics — not just
-appearance — vary by identity. This is what makes "the WM has to bind
-dynamics to identity" non-trivial.
+All identities are non-circular polygons so the only circle in any
+scene is the pusher (agent). Each identity has a distinct (mass,
+friction) signature, forcing the WM to bind *dynamics* — not just
+appearance — to identity. Mass/friction (hardcoded `mass=1, friction=1`
+in the original PushT `add_*` constructors) are plumbed through so
+dynamics — not just appearance — vary by identity. This is what makes
+"the WM has to bind dynamics to identity" non-trivial.
 
 ### 3.2 Constructor
 

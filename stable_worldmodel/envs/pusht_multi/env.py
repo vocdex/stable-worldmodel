@@ -80,9 +80,8 @@ def _add_box(space, position, angle, scale, color, mass, friction):
     verts = [(-scale, -scale), (-scale, scale), (scale, scale), (scale, -scale)]
     moment = pymunk.moment_for_poly(mass, verts)
     body = pymunk.Body(mass, moment)
-    body.position = position
     body.angle = angle
-    body.friction = friction
+    body.position = position
     shape = pymunk.Poly(body, verts)
     shape.color = pygame.Color(color)
     shape.friction = friction
@@ -111,10 +110,15 @@ def _add_tee(space, position, angle, scale, color, mass, friction):
     for s in (s1, s2):
         s.color = pygame.Color(color)
         s.friction = friction
+    # Order is load-bearing: pymunk rotates the body around its
+    # center_of_gravity, and `body.angle` reads body.position relative to
+    # the rotated origin. With a non-trivial COG, setting position before
+    # angle makes body.position read back at a different world location
+    # than was passed in. Set COG → angle → position so the body ends up
+    # exactly at `position` with `angle`.
     body.center_of_gravity = (s1.center_of_gravity + s2.center_of_gravity) / 2
-    body.position = position
     body.angle = angle
-    body.friction = friction
+    body.position = position
     space.add(body, s1, s2)
     return body
 
@@ -140,9 +144,8 @@ def _add_small_tee(space, position, angle, scale, color, mass, friction):
         s.color = pygame.Color(color)
         s.friction = friction
     body.center_of_gravity = (s1.center_of_gravity + s2.center_of_gravity) / 2
-    body.position = position
     body.angle = angle
-    body.friction = friction
+    body.position = position
     space.add(body, s1, s2)
     return body
 
@@ -175,9 +178,8 @@ def _add_plus(space, position, angle, scale, color, mass, friction):
     body.center_of_gravity = sum(
         (s.center_of_gravity for s in shapes), Vec2d(0, 0)
     ) / 3
-    body.position = position
     body.angle = angle
-    body.friction = friction
+    body.position = position
     space.add(body, *shapes)
     return body
 
@@ -203,9 +205,8 @@ def _add_L(space, position, angle, scale, color, mass, friction):
         s.color = pygame.Color(color)
         s.friction = friction
     body.center_of_gravity = (s1.center_of_gravity + s2.center_of_gravity) / 2
-    body.position = position
     body.angle = angle
-    body.friction = friction
+    body.position = position
     space.add(body, s1, s2)
     return body
 
@@ -231,9 +232,8 @@ def _add_Z(space, position, angle, scale, color, mass, friction):
         s.color = pygame.Color(color)
         s.friction = friction
     body.center_of_gravity = (s1.center_of_gravity + s2.center_of_gravity) / 2
-    body.position = position
     body.angle = angle
-    body.friction = friction
+    body.position = position
     space.add(body, s1, s2)
     return body
 
@@ -251,9 +251,8 @@ def _add_I(space, position, angle, scale, color, mass, friction):
     shape.color = pygame.Color(color)
     shape.friction = friction
     body.center_of_gravity = shape.center_of_gravity
-    body.position = position
     body.angle = angle
-    body.friction = friction
+    body.position = position
     space.add(body, shape)
     return body
 
@@ -286,6 +285,9 @@ def _add_object_body(
 
 
 def _make_agent_subspace(ws: int) -> swm_spaces.Dict:
+    # Agent is a kinematic circle, radius 0.375*scale. At the max scale of
+    # 60 the radius is only 22.5 px, so its safe spawn range is wide.
+    sp_low, sp_high = _safe_spawn_range(agent_bounding_radius(60.0), ws)
     return swm_spaces.Dict(
         {
             'color': swm_spaces.RGBBox(
@@ -299,7 +301,7 @@ def _make_agent_subspace(ws: int) -> swm_spaces.Dict:
                 shape=(), dtype=np.float64,
             ),
             'start_position': swm_spaces.Box(
-                low=50, high=450,
+                low=sp_low, high=sp_high,
                 init_value=np.array((256, 400), dtype=np.float64),
                 shape=(2,), dtype=np.float64,
             ),
@@ -312,7 +314,28 @@ def _make_agent_subspace(ws: int) -> swm_spaces.Dict:
     )
 
 
-def _make_object_subspace(spec: ObjectSpec, enabled_default: bool) -> swm_spaces.Dict:
+def _safe_spawn_range(bounding_radius: float, ws: int, wall_margin: float = 10.0) -> tuple[float, float]:
+    """Box bounds for a body's center so it stays inside the walls.
+
+    Walls are at [5, ws-6] (set by `_segment`); add a small `wall_margin`
+    so a freshly placed body doesn't kiss a wall and trigger contacts
+    on the first env step.
+    """
+    low = 5 + bounding_radius + wall_margin
+    high = ws - 6 - bounding_radius - wall_margin
+    if low >= high:
+        # Object is too big for the workspace at this scale; collapse to
+        # a single feasible point (the geometric center).
+        c = (low + high) / 2
+        return (c, c)
+    return (float(low), float(high))
+
+
+def _make_object_subspace(spec: ObjectSpec, enabled_default: bool, ws: int) -> swm_spaces.Dict:
+    # Per-shape spawn box so the bounding circle fits inside the walls
+    # without the rejection sampler having to handle wall clearance.
+    sp_low, sp_high = _safe_spawn_range(spec.bounding_radius, ws)
+    center = (sp_low + sp_high) / 2
     return swm_spaces.Dict(
         {
             'enabled': swm_spaces.Discrete(2, init_value=int(enabled_default)),
@@ -328,13 +351,13 @@ def _make_object_subspace(spec: ObjectSpec, enabled_default: bool) -> swm_spaces
                 shape=(), dtype=np.float64,
             ),
             'start_position': swm_spaces.Box(
-                low=100, high=400,
-                init_value=np.array((256, 200), dtype=np.float64),
+                low=sp_low, high=sp_high,
+                init_value=np.array((center, center), dtype=np.float64),
                 shape=(2,), dtype=np.float64,
             ),
             'goal_position': swm_spaces.Box(
-                low=80, high=430,
-                init_value=np.array((256, 256), dtype=np.float64),
+                low=sp_low, high=sp_high,
+                init_value=np.array((center, center), dtype=np.float64),
                 shape=(2,), dtype=np.float64,
             ),
             'goal_angle': swm_spaces.Box(
@@ -466,6 +489,7 @@ class PushTMulti(gym.Env):
                 oid: _make_object_subspace(
                     self.specs[oid],
                     enabled_default=(oid in self._default_enabled),
+                    ws=ws,
                 )
                 for oid in self.object_ids
             },
@@ -620,45 +644,45 @@ class PushTMulti(gym.Env):
         self,
         key: str,
         include_agent: bool = False,
-        max_iters: int = 200,
+        per_entity_iters: int = 500,
         margin: float = 8.0,
     ) -> None:
-        """Resample positions until no pair of bodies overlaps.
+        """Sequential non-overlap placement.
 
-        Uses each shape's rotation-invariant *bounding radius* (the
-        circumscribed-circle radius of its polygon vertices, see
-        `ObjectSpec.bounding_radius`). Min separation for a pair of
-        bodies (i, j) is `r_i + r_j + margin`, so a T (r≈121 px) and an
-        I (r≈62 px) must be at least ~191 px apart. This is conservative
-        — bodies in some orientations can sit closer without colliding —
-        but it guarantees no overlap at *any* sampled angle.
+        Strategy: sort participating entities by bounding radius
+        descending (place the biggest first), then for each entity
+        resample its position until it satisfies the min-separation
+        constraint against every already-placed entity. This converges
+        in O(N) resampling rounds rather than the O(2^N)-ish behaviour
+        of pure joint-rejection sampling — important once a scene has a
+        T (radius ~121) plus several other large polygons.
+
+        Min separation for any pair (i, j) is `r_i + r_j + margin`, where
+        `r_*` is the rotation-invariant circumscribed-circle radius from
+        `ObjectSpec.bounding_radius`. Conservative — bodies in some
+        orientations could sit closer without colliding — but guarantees
+        no overlap at *any* sampled angle.
 
         `key`:
           - 'start_position' — agent participates iff `include_agent=True`.
-          - 'goal_position' — agent does not have a goal pose.
+          - 'goal_position'  — agent does not have a goal pose.
 
-        If no valid configuration is found after `max_iters` resamples,
-        we accept the last sample silently; the physics step at the
-        first env step will then push penetrating bodies apart. The
-        warning threshold of `max_iters=200` is high enough that this
-        only triggers when the spawn-range geometry genuinely can't fit
-        the requested object set.
+        If a given entity can't be placed within `per_entity_iters` tries
+        (highly cluttered scene), accept the last sample. Pymunk's first
+        physics step will resolve any residual penetration.
         """
-        # Build the list of (entity_key, radius) participants. entity_key is
-        # ('agent',) for the pusher or ('obj', oid) for an object.
+        # Build participants list with radii.
         entities: list[tuple[tuple[str, ...], float]] = []
         for oid in sorted(self.enabled):
-            r = self.specs[oid].bounding_radius
-            entities.append((('obj', oid), r))
+            entities.append((('obj', oid), self.specs[oid].bounding_radius))
         if include_agent:
             agent_scale = float(self.variation_space['agent']['scale'].value)
             entities.append((('agent',), agent_bounding_radius(agent_scale)))
         if len(entities) < 2:
             return
 
-        radii = np.array([r for _, r in entities], dtype=np.float64)
-        # min_sep_pair[i, j] = r_i + r_j + margin
-        min_sep_pair = radii[:, None] + radii[None, :] + margin
+        # Largest first — easier to find space for smaller ones around it.
+        entities.sort(key=lambda e: e[1], reverse=True)
 
         def _position(path: tuple[str, ...]) -> np.ndarray:
             if path[0] == 'agent':
@@ -671,21 +695,22 @@ class PushTMulti(gym.Env):
             else:
                 self.variation_space['obj'][path[1]][key].sample()
 
-        for _ in range(max_iters):
-            positions = np.stack([_position(p) for p, _ in entities])
-            diffs = positions[:, None, :] - positions[None, :, :]
-            dists = np.linalg.norm(diffs, axis=-1)
-            # Mask self-distance.
-            np.fill_diagonal(dists, np.inf)
-            slack = dists - min_sep_pair
-            if slack.min() >= 0:
-                return
-            # Resample the offender from the tightest pair. Pick the first
-            # of the pair deterministically (rng is in the variation space).
-            i, j = np.unravel_index(np.argmin(slack), slack.shape)
-            offender = entities[min(i, j)][0]
-            _resample(offender)
-        # Fell through without converging — accept the last sample.
+        placed: list[tuple[np.ndarray, float]] = []  # (position, radius)
+        for path, r in entities:
+            for _ in range(per_entity_iters):
+                pos = _position(path)
+                ok = True
+                for prev_pos, prev_r in placed:
+                    if np.linalg.norm(pos - prev_pos) < (r + prev_r + margin):
+                        ok = False
+                        break
+                if ok:
+                    placed.append((np.asarray(pos, dtype=np.float64).copy(), r))
+                    break
+                _resample(path)
+            else:
+                # per_entity_iters exhausted — accept whatever's there.
+                placed.append((np.asarray(_position(path), dtype=np.float64).copy(), r))
 
     # ------------------------------------------------------------------
     # Scene construction / state
