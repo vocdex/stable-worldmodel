@@ -569,19 +569,21 @@ class PushTMulti(gym.Env):
         # Build the pymunk scene from the resolved variation values.
         self._setup_scene()
 
-        # Compute the start-state and goal-state arrays.
+        # Compute the start-state and goal-state arrays. Bodies are
+        # already placed at the sampled start poses by `_setup_scene`, so
+        # we only need to *re-apply* state if the caller is overriding it
+        # via reset options — otherwise calling _apply_state would just
+        # re-place at the same poses and then step physics, generating
+        # cached contact info that pollutes the goal-frame render.
         cur_state = self._compose_full_state(at_goal=False)
         goal_state = self._compose_full_state(at_goal=True)
 
-        # Allow callers to override.
         if 'state' in options:
             cur_state = np.asarray(options['state'], dtype=np.float64)
+            self._apply_state(cur_state)
         if 'goal_state' in options:
             goal_state = np.asarray(options['goal_state'], dtype=np.float64)
 
-        # Apply (without stepping physics, so we keep the start state bit-
-        # exact for the planner).
-        self._apply_state(cur_state)
         self.goal_state = goal_state
         self._goal_image, self._goal_seg = self._render_goal_frame(goal_state)
 
@@ -915,6 +917,13 @@ class PushTMulti(gym.Env):
         canvas.fill(self.variation_space['background']['color'].value)
         self.screen = canvas
         draw_options = DrawOptions(canvas)
+        # Disable pymunk's debug overlays — by default `debug_draw` also
+        # renders constraints and collision-point normals (short line
+        # segments at each contact). For object-centric encoding those
+        # would show up in both the live obs and the goal frame as
+        # "random lines" the segmentation map doesn't account for.
+        # Restrict to shape geometry only.
+        draw_options.flags = pymunk.SpaceDebugDrawOptions.DRAW_SHAPES
 
         # Goal-pose outlines (optional, drawn first so they sit behind the
         # live bodies). One outline per enabled object, using its identity's
