@@ -94,6 +94,8 @@ def _build_policy(cfg):
             init_std=cfg.policy.cem_init_std,
             action_noise_std=cfg.policy.cem_action_noise_std,
             angle_weight=cfg.policy.cem_angle_weight,
+            action_penalty=cfg.policy.cem_action_penalty,
+            action_clip=cfg.policy.cem_action_clip,
             seed=cfg.seed,
         )
     raise ValueError(f'Unknown policy kind {kind!r}; expected weak|expert|cem')

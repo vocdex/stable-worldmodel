@@ -367,11 +367,14 @@ class MultiObjectCEMPolicy(BasePolicy):
         init_std: float = 0.5,
         action_noise_std: float = 0.05,
         angle_weight: float = 30.0,
+        action_penalty: float = 1.5,
+        action_clip: float = 0.8,
         seed: int | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         assert num_samples >= topk * 2, 'num_samples should be ≥ 2*topk'
+        assert 0.0 < action_clip <= 1.0
         self.horizon = int(horizon)
         self.num_samples = int(num_samples)
         self.n_iter = int(n_iter)
@@ -380,6 +383,18 @@ class MultiObjectCEMPolicy(BasePolicy):
         self.init_std = float(init_std)
         self.action_noise_std = float(action_noise_std)
         self.angle_weight = float(angle_weight)
+        # Action-magnitude penalty: cost += action_penalty * ||a||² summed
+        # over the rollout. Without this, CEM frequently saturates the
+        # action to ±1 (full-speed pushes) because terminal cost has no
+        # opinion on effort — the resulting contacts look way harder
+        # than the standard PushT expert (which is human teleop, naturally
+        # gentle). With this penalty, CEM trades reach-the-goal against
+        # don't-shove-too-hard, producing visually smoother trajectories
+        # and reducing rare tunneling events from extreme impulses.
+        self.action_penalty = float(action_penalty)
+        # Tighter action clip during CEM sampling — agent never commands
+        # full-speed unless the cost gradient really demands it.
+        self.action_clip = float(action_clip)
         self.set_seed(seed)
         self._plan: list[np.ndarray] = []  # cached per-env plan tail
         self._step: int = 0
@@ -432,14 +447,16 @@ class MultiObjectCEMPolicy(BasePolicy):
     def _rollout_cost(self, env, action_seq: np.ndarray) -> float:
         """Apply `action_seq` (H, 2) to the env step-by-step.
 
-        Cost = pure terminal cost (joint distance at the end of the
-        rollout). Summed cost rewarded quick approaches even when the
-        trajectory overshot the goal afterwards. With terminal cost CEM
-        explicitly picks plans that *end* near the goal.
+        Cost = terminal joint distance + action-magnitude penalty,
+        where the penalty discourages full-speed pushes. Pure terminal
+        cost rewarded saturated actions and produced contacts much
+        harder than the standard PushT expert (human teleop, gentle).
         """
         for h in range(action_seq.shape[0]):
             env.step(action_seq[h])
-        return self._cost(env)
+        terminal = self._cost(env)
+        effort = self.action_penalty * float(np.sum(action_seq ** 2))
+        return terminal + effort
 
     def _warm_start(self, env) -> np.ndarray:
         """Heuristic init: aim at the "behind" point of the focus object
@@ -486,7 +503,7 @@ class MultiObjectCEMPolicy(BasePolicy):
         half = max(1, H // 2)
         plan[:half] = d1
         plan[half:] = d2
-        return plan
+        return np.clip(plan, -self.action_clip, self.action_clip)
 
     def _cem(self, env) -> np.ndarray:
         """Run CEM in the env. Returns the elite mean action sequence (H, 2).
@@ -503,7 +520,10 @@ class MultiObjectCEMPolicy(BasePolicy):
         for _ in range(self.n_iter):
             # Sample K candidate sequences and clip to action box.
             noise = self.rng.normal(size=(K, H, 2))
-            candidates = np.clip(mean[None] + std[None] * noise, -1.0, 1.0)
+            candidates = np.clip(
+                mean[None] + std[None] * noise,
+                -self.action_clip, self.action_clip,
+            )
 
             costs = np.empty(K, dtype=np.float64)
             for k in range(K):
