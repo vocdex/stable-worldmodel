@@ -25,8 +25,9 @@ enabled_objects: [A, B]
 dataset_name: pusht_multi_AB
 
 # ---- Collection scale ----
+# Single HDF5 file per dataset at <cache>/datasets/<dataset_name>.h5.
+# Re-running with the same dataset_name resumes from the existing file.
 num_traj: 10000
-num_shards: 10
 seed: 3072
 cache_dir: null
 

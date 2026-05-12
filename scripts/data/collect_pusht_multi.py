@@ -6,25 +6,24 @@ A single config switch picks which compositional subset to enable
 variation-values overrides), so RQ1 (count) and RQ2 (pair-comp) splits
 share the same script.
 
-Example:
-    python scripts/data/collect_pusht_multi.py \
-        dataset_name=pusht_multi_AB \
-        enabled_objects='[A,B]' \
-        num_traj=10000
+Each invocation produces a single HDF5 file at
+`<cache>/datasets/<dataset_name>.h5`, matching the layout of the other
+single-file datasets (e.g. `cube_single_expert.h5`). `record_dataset`
+supports resuming, so re-running with the same `dataset_name` continues
+where a previous run left off.
 
-    # or use a preset override group:
-    python scripts/data/collect_pusht_multi.py +preset=AB
+Example:
+    python scripts/data/collect_pusht_multi.py \\
+        dataset_name=pusht_multi_AB \\
+        enabled_objects='[A,B]' \\
+        num_traj=10000
 """
 
 import hydra
-import numpy as np
 from loguru import logger as logging
 
 import stable_worldmodel as swm
-from stable_worldmodel.envs.pusht_multi import (
-    ALL_OBJECTS,
-    MultiObjectWeakPolicy,
-)
+from stable_worldmodel.envs.pusht_multi import MultiObjectWeakPolicy
 
 
 def _build_options(cfg) -> dict:
@@ -87,18 +86,13 @@ def run(cfg):
         )
     )
 
-    options = _build_options(cfg)
-    traj_per_shard = cfg.num_traj // cfg.num_shards
-    rng = np.random.default_rng(cfg.seed)
-
-    for i in range(cfg.num_shards):
-        world.record_dataset(
-            f'{cfg.dataset_name}/shard_{i}',
-            episodes=traj_per_shard,
-            seed=int(rng.integers(0, 1_000_000)),
-            cache_dir=cfg.cache_dir,
-            options=options,
-        )
+    world.record_dataset(
+        cfg.dataset_name,
+        episodes=cfg.num_traj,
+        seed=cfg.seed,
+        cache_dir=cfg.cache_dir,
+        options=_build_options(cfg),
+    )
 
     logging.success(f' 🎉 Done collecting {cfg.dataset_name}')
 
