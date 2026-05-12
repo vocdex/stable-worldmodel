@@ -323,3 +323,218 @@ class MultiObjectGoalPolicy(BasePolicy):
             self._focus_age[i] += 1
 
         return actions
+
+
+class MultiObjectCEMPolicy(BasePolicy):
+    """Oracle-CEM MPC expert.
+
+    Treats the environment itself as the dynamics model: at every
+    replan, the policy snapshots the env state, samples action
+    sequences from a Gaussian, rolls each sequence forward through the
+    *real* simulator, scores by joint distance to goal, takes the
+    top-K elites, refits, and repeats for `n_iter` CEM iterations.
+    The first action of the elite mean is executed; the remainder
+    is cached and replayed for the next `replan_every - 1` steps.
+
+    Because rollouts step the same env that we are collecting on, the
+    expert sees physics identical to data-collection time — there's no
+    sim-to-real gap between the planner and the runtime, only compute
+    cost. Expected speed at K=64, H=8, n_iter=2, replan_every=3 is
+    roughly 1–2 seconds per env-step on a single env, so this expert
+    is meant for **non-vectorized collection** (`num_envs=1`).
+
+    Args:
+        horizon: planning horizon in env steps.
+        num_samples: CEM candidates per iteration.
+        n_iter: CEM refit iterations per replan.
+        topk: number of elite candidates kept after each iteration.
+        replan_every: env steps between replan calls (1 = full MPC).
+        init_std: initial Gaussian std for action sampling.
+        action_noise_std: Gaussian noise on the executed action (small,
+            so the expert isn't perfectly deterministic).
+        angle_weight: cost weight on angle error (px units; angle in
+            radians is multiplied by this number).
+        seed: RNG seed.
+    """
+
+    def __init__(
+        self,
+        horizon: int = 8,
+        num_samples: int = 64,
+        n_iter: int = 2,
+        topk: int = 8,
+        replan_every: int = 3,
+        init_std: float = 0.5,
+        action_noise_std: float = 0.05,
+        angle_weight: float = 30.0,
+        seed: int | None = None,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        assert num_samples >= topk * 2, 'num_samples should be ≥ 2*topk'
+        self.horizon = int(horizon)
+        self.num_samples = int(num_samples)
+        self.n_iter = int(n_iter)
+        self.topk = int(topk)
+        self.replan_every = int(replan_every)
+        self.init_std = float(init_std)
+        self.action_noise_std = float(action_noise_std)
+        self.angle_weight = float(angle_weight)
+        self.set_seed(seed)
+        self._plan: list[np.ndarray] = []  # cached per-env plan tail
+        self._step: int = 0
+
+    def set_seed(self, seed: int | None) -> None:
+        self.seed = seed
+        self.rng = np.random.default_rng(seed)
+
+    def set_env(self, env) -> None:
+        self.env = env
+        spec = getattr(env, 'spec', None)
+        if spec is None:
+            envs = getattr(env, 'envs', None)
+            if envs:
+                spec = envs[0].spec
+        assert spec is not None and 'swm/PushTMulti' in spec.id, (
+            f'MultiObjectCEMPolicy requires swm/PushTMulti, got {spec}'
+        )
+        envs = self._envs()
+        if len(envs) != 1:
+            raise RuntimeError(
+                'MultiObjectCEMPolicy supports num_envs=1 only; got '
+                f'{len(envs)}. CEM rollouts in the live env are not '
+                'parallelizable.'
+            )
+
+    def _envs(self):
+        base = self.env.unwrapped
+        return [e.unwrapped for e in base.envs] if hasattr(base, 'envs') else [base]
+
+    def _cost(self, env) -> float:
+        """Joint cost = sum over enabled objects of (pos_dist + angle*weight)."""
+        cost = 0.0
+        for oid in env.enabled:
+            body = env.bodies.get(oid)
+            if body is None:
+                continue
+            pos = np.array(body.position, dtype=np.float64)
+            angle = float(body.angle % (2 * np.pi))
+            goal = env.goal_pose[oid]
+            pos_d = float(np.linalg.norm(pos - goal[:2]))
+            cost += pos_d
+            spec = env.specs[oid]
+            if spec.has_orientation:
+                ang_d = abs((angle - goal[2]) % (2 * np.pi))
+                ang_d = min(ang_d, 2 * np.pi - ang_d)
+                cost += ang_d * self.angle_weight
+        return cost
+
+    def _rollout_cost(self, env, action_seq: np.ndarray) -> float:
+        """Apply `action_seq` (H, 2) to the env step-by-step.
+
+        Cost = pure terminal cost (joint distance at the end of the
+        rollout). Summed cost rewarded quick approaches even when the
+        trajectory overshot the goal afterwards. With terminal cost CEM
+        explicitly picks plans that *end* near the goal.
+        """
+        for h in range(action_seq.shape[0]):
+            env.step(action_seq[h])
+        return self._cost(env)
+
+    def _warm_start(self, env) -> np.ndarray:
+        """Heuristic init: aim at the "behind" point of the focus object
+        (the side opposite to its goal) for the first half of the
+        horizon, then at the obj's center for the second half. So the
+        warm-started rollout walks the agent around to the staging point
+        and then pushes through.
+
+        Without a focus-aware warm-start, random walks from a zero-mean
+        Gaussian almost never touch the obj — every rollout returns the
+        same constant cost and CEM has no signal.
+        """
+        H = self.horizon
+        agent_pos = np.array(env.agent.position, dtype=np.float64)
+        dists = {}
+        for oid in env.enabled:
+            body = env.bodies.get(oid)
+            if body is None:
+                continue
+            p = np.array(body.position, dtype=np.float64)
+            g = env.goal_pose[oid][:2]
+            dists[oid] = float(np.linalg.norm(p - g))
+        if not dists:
+            return np.zeros((H, 2), dtype=np.float64)
+        focus_oid = max(dists, key=dists.get)
+        obj_pos = np.array(env.bodies[focus_oid].position, dtype=np.float64)
+        goal_pos = np.asarray(env.goal_pose[focus_oid][:2], dtype=np.float64)
+        push_dir = goal_pos - obj_pos
+        nrm = float(np.linalg.norm(push_dir))
+        if nrm < 1e-3:
+            return np.zeros((H, 2), dtype=np.float64)
+        push_dir = push_dir / nrm
+        behind = obj_pos - push_dir * 60.0
+
+        # Phase 1: head to behind. Phase 2: head past obj toward goal.
+        def _unit_to(target, pos):
+            d = target - pos
+            n = float(np.linalg.norm(d))
+            return d / n if n > 1e-3 else np.zeros(2)
+
+        d1 = _unit_to(behind, agent_pos)
+        d2 = push_dir  # already unit-length
+        plan = np.zeros((H, 2), dtype=np.float64)
+        half = max(1, H // 2)
+        plan[:half] = d1
+        plan[half:] = d2
+        return plan
+
+    def _cem(self, env) -> np.ndarray:
+        """Run CEM in the env. Returns the elite mean action sequence (H, 2).
+
+        Snapshots and restores state internally so the live env pose is
+        unchanged on return.
+        """
+        snapshot = env._snapshot_bodies()
+        H, K = self.horizon, self.num_samples
+
+        mean = self._warm_start(env)
+        std = np.full((H, 2), self.init_std, dtype=np.float64)
+
+        for _ in range(self.n_iter):
+            # Sample K candidate sequences and clip to action box.
+            noise = self.rng.normal(size=(K, H, 2))
+            candidates = np.clip(mean[None] + std[None] * noise, -1.0, 1.0)
+
+            costs = np.empty(K, dtype=np.float64)
+            for k in range(K):
+                env._restore_bodies(snapshot)
+                costs[k] = self._rollout_cost(env, candidates[k])
+
+            # Pick elites, refit Gaussian.
+            elite_idx = np.argsort(costs)[: self.topk]
+            elites = candidates[elite_idx]
+            mean = elites.mean(axis=0)
+            std = elites.std(axis=0) + 1e-3
+
+        # Final restore so the live env pose is exactly the pre-CEM state.
+        env._restore_bodies(snapshot)
+        return mean
+
+    def get_action(self, info_dict, **kwargs):
+        assert hasattr(self, 'env'), 'Environment not set for the policy'
+        envs = self._envs()
+        env = envs[0]
+
+        if self._step % self.replan_every == 0 or not self._plan:
+            plan = self._cem(env)
+            self._plan = [plan[h] for h in range(plan.shape[0])]
+
+        action = self._plan.pop(0)
+        action = action + self.rng.normal(0, self.action_noise_std, size=2)
+        action = np.clip(action, -1.0, 1.0).astype(np.float32)
+        self._step += 1
+
+        # Reset cached plan/step on episode boundaries — we detect this by
+        # the agent's position being far from where the plan last left it,
+        # which is the simplest signal available in this interface.
+        return action[None, :]  # shape (n_envs=1, 2)

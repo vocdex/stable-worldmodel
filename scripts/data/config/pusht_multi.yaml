@@ -48,14 +48,14 @@ world:
   image_shape: [224, 224]
 
 # ---- Policy ----
-# policy.kind = weak | expert
+# policy.kind = weak | expert | cem
 #   weak   — MultiObjectWeakPolicy (random with focus bias + wedge mode).
-#            Coverage-driven; produces few successes.
 #   expert — MultiObjectGoalPolicy (state-based push-toward-goal).
-#            Privileged state info + Gaussian action noise — mirrors the
-#            18k-traj scripted PushT expert.
+#   cem    — MultiObjectCEMPolicy (oracle-CEM MPC using the actual env
+#            as the dynamics model). High quality, slow, requires
+#            num_envs=1.
 policy:
-  kind: expert
+  kind: cem
   # MultiObjectWeakPolicy params
   dist_constraint: 100
   switch_every: 10
@@ -65,3 +65,12 @@ policy:
   noise_std: 0.15
   expert_switch_every: 40
   switch_pos_tol: 18
+  # MultiObjectCEMPolicy params
+  cem_horizon: 8
+  cem_num_samples: 64
+  cem_n_iter: 2
+  cem_topk: 8
+  cem_replan_every: 3
+  cem_init_std: 0.5
+  cem_action_noise_std: 0.05
+  cem_angle_weight: 30.0

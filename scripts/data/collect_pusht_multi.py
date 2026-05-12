@@ -24,6 +24,7 @@ from loguru import logger as logging
 
 import stable_worldmodel as swm
 from stable_worldmodel.envs.pusht_multi import (
+    MultiObjectCEMPolicy,
     MultiObjectGoalPolicy,
     MultiObjectWeakPolicy,
 )
@@ -83,7 +84,19 @@ def _build_policy(cfg):
             switch_pos_tol=cfg.policy.switch_pos_tol,
             seed=cfg.seed,
         )
-    raise ValueError(f'Unknown policy kind {kind!r}; expected weak|expert')
+    if kind == 'cem':
+        return MultiObjectCEMPolicy(
+            horizon=cfg.policy.cem_horizon,
+            num_samples=cfg.policy.cem_num_samples,
+            n_iter=cfg.policy.cem_n_iter,
+            topk=cfg.policy.cem_topk,
+            replan_every=cfg.policy.cem_replan_every,
+            init_std=cfg.policy.cem_init_std,
+            action_noise_std=cfg.policy.cem_action_noise_std,
+            angle_weight=cfg.policy.cem_angle_weight,
+            seed=cfg.seed,
+        )
+    raise ValueError(f'Unknown policy kind {kind!r}; expected weak|expert|cem')
 
 
 @hydra.main(
