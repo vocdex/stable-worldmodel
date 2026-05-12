@@ -470,7 +470,15 @@ class PushTMulti(gym.Env):
                     }
                 ),
                 'rendering': swm_spaces.Dict(
-                    {'render_goal': swm_spaces.Discrete(2, init_value=1)}
+                    # Default OFF for PushTMulti: drawing a faded goal-pose
+                    # outline into the live RGB would create static
+                    # object-shaped "ghosts" that an object-centric encoder
+                    # (e.g. SlotContrast) would bind slots to — they have no
+                    # corresponding segmentation label, never move, and would
+                    # eat slot capacity. The goal is delivered separately via
+                    # info['goal']; re-enable here only if a downstream task
+                    # genuinely needs the goal blended into the observation.
+                    {'render_goal': swm_spaces.Discrete(2, init_value=0)}
                 ),
             },
             sampling_order=['background', 'obj', 'agent', 'rendering'],
