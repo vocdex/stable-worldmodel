@@ -412,6 +412,8 @@ class PushTMulti(gym.Env):
         self,
         objects: tuple[str, ...] = ('A', 'B', 'C'),
         enabled_objects: tuple[str, ...] | None = None,
+        subset_mode: str = 'fixed',
+        subset_k_range: tuple[int, int] = (1, 6),
         success_pos_tol: float = 20.0,
         success_angle_tol: float = np.pi / 9,
         resolution: int = 224,
@@ -442,6 +444,31 @@ class PushTMulti(gym.Env):
                     f'enabled_objects contains {oid!r} not in objects={self.object_ids}'
                 )
         self._default_enabled: set[str] = set(enabled_objects)
+
+        # Per-episode subset randomization. 'fixed' (default) keeps the
+        # existing behavior: enabled set comes from the constructor /
+        # reset-options. 'random' samples k ~ U[k_min, k_max] then picks
+        # a uniform subset of size k from `objects` on every reset,
+        # overriding any obj.<oid>.enabled values. Used to build a single
+        # SC training dataset that contains scenes with varying k and
+        # varying identity combinations.
+        if subset_mode not in ('fixed', 'random'):
+            raise ValueError(
+                f'subset_mode must be "fixed" or "random", got {subset_mode!r}'
+            )
+        self.subset_mode = subset_mode
+        k_min, k_max = subset_k_range
+        # Clamp k_max to the number of available identities so callers can
+        # leave the default (1, 6) and have it adapt to `objects` of any
+        # size without hand-tuning.
+        k_max = min(int(k_max), len(self.object_ids))
+        k_min = max(1, int(k_min))
+        if not (1 <= k_min <= k_max <= len(self.object_ids)):
+            raise ValueError(
+                f'subset_k_range {subset_k_range} resolves to invalid '
+                f'(k_min={k_min}, k_max={k_max}) for objects={self.object_ids}'
+            )
+        self.subset_k_range = (k_min, k_max)
 
         self.window_size = ws = WINDOW_SIZE
         self.render_size = resolution
@@ -577,6 +604,23 @@ class PushTMulti(gym.Env):
         swm_spaces.reset_variation_space(
             self.variation_space, seed, options, self._default_variations,
         )
+
+        # In 'random' subset mode the enabled flags from the variation
+        # values are deliberately overridden — sample k uniformly from
+        # the configured range, then a uniform subset of that size from
+        # the available identity pool. Applied after reset_variation_space
+        # so per-episode `enabled` is the dominant signal (not whatever
+        # the variation space happened to sample).
+        if self.subset_mode == 'random':
+            k_min, k_max = self.subset_k_range
+            k = int(self.rng.integers(k_min, k_max + 1))
+            chosen = self.rng.choice(
+                list(self.object_ids), size=k, replace=False
+            )
+            chosen_set = set(chosen.tolist())
+            for oid in self.object_ids:
+                flag = int(oid in chosen_set)
+                self.variation_space['obj'][oid]['enabled'].set_value(flag)
 
         # Resolve the active set of enabled objects after the variation
         # space has been (re-)sampled. The 'enabled' Discrete defaults to

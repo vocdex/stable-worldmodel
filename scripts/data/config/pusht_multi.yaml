@@ -17,12 +17,21 @@ hydra:
     dir: .
 
 # ---- Identity / split selection ----
-# Set both lists per dataset. `objects` is the env's "available identities"
-# (must be consistent across all datasets a single SC model will see).
-# `enabled_objects` picks which of those are *active* per episode.
+# `objects` is the env's "available identities" (must be consistent
+# across all datasets a single SC model will see).
+# `enabled_objects` picks which of those are *active* per episode
+# (used only when subset_mode=fixed).
+# `subset_mode`:
+#   fixed  — every episode uses `enabled_objects` verbatim.
+#   random — every episode samples k ~ U[k_min, k_max] then a uniform
+#            subset of that size from `objects`. Use this for the
+#            SlotContrast training set so SC sees varied k and varied
+#            identity combinations.
 objects: [A, B, C, D, E, F]
 enabled_objects: [A, B]
 dataset_name: pusht_multi_AB
+subset_mode: fixed
+subset_k_range: [1, 6]
 
 # ---- Collection scale ----
 # Single HDF5 file per dataset at <cache>/datasets/<dataset_name>.h5.
@@ -38,11 +47,21 @@ world:
   max_episode_steps: 180
   image_shape: [224, 224]
 
-# ---- Expert policy ----
+# ---- Policy ----
+# policy.kind = weak | expert
+#   weak   — MultiObjectWeakPolicy (random with focus bias + wedge mode).
+#            Coverage-driven; produces few successes.
+#   expert — MultiObjectGoalPolicy (state-based push-toward-goal).
+#            Privileged state info + Gaussian action noise — mirrors the
+#            18k-traj scripted PushT expert.
 policy:
+  kind: expert
+  # MultiObjectWeakPolicy params
   dist_constraint: 100
   switch_every: 10
-  # Probability of focusing on a midpoint between two enabled objects.
-  # Drives pairwise contact sampling (needed for RQ2). 0 reproduces the
-  # single-object weak-policy behavior on whichever object is active.
   p_wedge: 0.3
+  # MultiObjectGoalPolicy params
+  push_distance: 60
+  noise_std: 0.15
+  expert_switch_every: 40
+  switch_pos_tol: 18

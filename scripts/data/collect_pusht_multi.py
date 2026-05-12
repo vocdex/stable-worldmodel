@@ -23,7 +23,10 @@ import hydra
 from loguru import logger as logging
 
 import stable_worldmodel as swm
-from stable_worldmodel.envs.pusht_multi import MultiObjectWeakPolicy
+from stable_worldmodel.envs.pusht_multi import (
+    MultiObjectGoalPolicy,
+    MultiObjectWeakPolicy,
+)
 
 
 def _build_options(cfg) -> dict:
@@ -33,6 +36,10 @@ def _build_options(cfg) -> dict:
     function packages those plus the default position/angle variations
     into the `options` dict that `world.record_dataset` forwards through
     to `env.reset(options=...)`.
+
+    In `subset_mode=random`, per-episode enabled flags are overridden
+    inside the env's reset and the values supplied here are ignored,
+    so we still emit them harmlessly — keeps the H5 schema identical.
     """
     objects = tuple(cfg.objects)
     enabled = set(cfg.enabled_objects)
@@ -59,32 +66,51 @@ def _build_options(cfg) -> dict:
     }
 
 
+def _build_policy(cfg):
+    kind = cfg.policy.get('kind', 'weak')
+    if kind == 'weak':
+        return MultiObjectWeakPolicy(
+            dist_constraint=cfg.policy.dist_constraint,
+            switch_every=cfg.policy.switch_every,
+            p_wedge=cfg.policy.p_wedge,
+            seed=cfg.seed,
+        )
+    if kind == 'expert':
+        return MultiObjectGoalPolicy(
+            push_distance=cfg.policy.push_distance,
+            noise_std=cfg.policy.noise_std,
+            switch_every=cfg.policy.expert_switch_every,
+            switch_pos_tol=cfg.policy.switch_pos_tol,
+            seed=cfg.seed,
+        )
+    raise ValueError(f'Unknown policy kind {kind!r}; expected weak|expert')
+
+
 @hydra.main(
     version_base=None, config_path='./config', config_name='pusht_multi'
 )
 def run(cfg):
     objects = tuple(cfg.objects)
     enabled = tuple(cfg.enabled_objects)
+    subset_mode = cfg.get('subset_mode', 'fixed')
+    subset_k_range = tuple(cfg.get('subset_k_range', (1, len(objects))))
     logging.info(
         f'PushTMulti collection: dataset_name={cfg.dataset_name}, '
-        f'objects={objects}, enabled={enabled}, episodes={cfg.num_traj}'
+        f'objects={objects}, enabled={enabled}, '
+        f'subset_mode={subset_mode}, episodes={cfg.num_traj}, '
+        f'policy={cfg.policy.get("kind", "weak")}'
     )
 
     world = swm.World(
         'swm/PushTMulti-v1',
         objects=list(objects),
         enabled_objects=list(enabled),
+        subset_mode=subset_mode,
+        subset_k_range=list(subset_k_range),
         **cfg.world,
         render_mode='rgb_array',
     )
-    world.set_policy(
-        MultiObjectWeakPolicy(
-            dist_constraint=cfg.policy.dist_constraint,
-            switch_every=cfg.policy.switch_every,
-            p_wedge=cfg.policy.p_wedge,
-            seed=cfg.seed,
-        )
-    )
+    world.set_policy(_build_policy(cfg))
 
     world.record_dataset(
         cfg.dataset_name,
