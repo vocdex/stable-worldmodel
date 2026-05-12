@@ -62,18 +62,18 @@ across every split.
 New env, no edits to existing `swm/PushT-v1`. Lives under
 `stable_worldmodel/envs/pusht_multi/`.
 
-### 3.1 Canonical object library
+### 3.1 Canonical object library — *as implemented*
 
 Each named identity has a fixed segmentation label so identity↔label is
 stable across all splits (needed so per-slot analysis is comparable
 between `{A,B}`, `{B,C}`, `{A,B,C}`).
 
 ```
-LABEL_BG = 0
+LABEL_BG    = 0
 LABEL_AGENT = 1
 
 OBJECT_LIBRARY = {
-    'A': {shape: 'T',      color: LightSlateGray, scale: 30, mass: 1.0, friction: 1.0, has_orientation: True, label: 2},
+    'A': {shape: 'T',      color: LightSlateGray, scale: 20, mass: 1.0, friction: 1.0, has_orientation: True, label: 2},
     'B': {shape: 'I',      color: Orange,         scale: 30, mass: 1.5, friction: 0.8, has_orientation: True, label: 3},
     'C': {shape: 'Z',      color: SeaGreen,       scale: 30, mass: 0.5, friction: 0.3, has_orientation: True, label: 4},
     'D': {shape: 'square', color: Purple,         scale: 30, mass: 2.5, friction: 1.5, has_orientation: True, label: 5},
@@ -82,13 +82,15 @@ OBJECT_LIBRARY = {
 }
 ```
 
-All identities are non-circular polygons so the only circle in any
-scene is the pusher (agent). Each identity has a distinct (mass,
-friction) signature, forcing the WM to bind *dynamics* — not just
-appearance — to identity. Mass/friction (hardcoded `mass=1, friction=1`
-in the original PushT `add_*` constructors) are plumbed through so
-dynamics — not just appearance — vary by identity. This is what makes
-"the WM has to bind dynamics to identity" non-trivial.
+All identities are non-circular polygons — the agent is the only circle
+in any scene, so the pusher is always visually unique. Each identity
+has a distinct `(mass, friction)` signature, so the WM has to bind
+**dynamics** to identity, not just appearance. `ObjectSpec` also exposes
+a `bounding_radius` property (rotation-invariant circumscribed-circle
+radius computed from the shape's polygon vertices) used by the
+non-overlap sampler. A's default scale is 20 (rather than the original
+PushT default of 30) — at scale 30 its stem ran 120 px long and
+dominated all multi-object placement.
 
 ### 3.2 Constructor
 
@@ -107,21 +109,62 @@ PushTMulti(
 
 ### 3.3 Variation space
 
-- `agent`: same as today.
-- For each `oid in objects`, a sub-Dict `obj.<oid>` with: `enabled`
-  (Discrete 2), `color`, `scale`, `start_position`, `angle`,
-  `goal_position`, `goal_angle`.
-- `background.color`, `rendering.render_goal`.
-- Sampling order: `[background, obj.<oid>..., agent, rendering]`.
-- **Non-overlap rejection** in `reset()` for both start and goal poses
-  (min pairwise separation ≥ 1.5 × max scale).
+Top-level keys: `agent`, `obj`, `background`, `rendering`. The
+per-object sub-Dicts live **nested under** `obj`, so the swm dot-path
+traversal resolves `obj.A.start_position` → `space['obj']['A']['start_position']`.
 
-### 3.4 Physics
+```
+agent:
+  color, scale, angle, start_position, velocity
+obj.<oid>:
+  enabled (Discrete 2), color, scale, angle,
+  start_position, goal_position, goal_angle
+background:
+  color
+rendering:
+  render_goal  (Discrete 2, init_value=0)
+```
 
-- `space.damping = 0.85` (currently 0). Without damping, un-contacted
-  objects coast forever, which complicates multi-object trajectories
-  without making the experiment more meaningful.
-- Per-identity `mass` and `friction` flow into `add_*`.
+`render_goal` defaults to **0** — the live RGB does *not* render a
+faded goal outline. The goal is delivered through `info['goal']` only.
+Drawing a ghost in the live obs would create static object-shaped
+regions that have no segmentation supervision and would eat slot
+capacity in an object-centric encoder.
+
+**Per-shape spawn boxes.** `start_position` and `goal_position` bounds
+are computed from each shape's `bounding_radius` so the body fits
+inside the walls (`[5, 506]`) with a 10 px margin without help from
+the sampler:
+
+```python
+low  = 5    + bounding_radius + 10
+high = 506  - bounding_radius - 10
+```
+
+So A (T, r≈81) spawns in a tight central box, F (L, r≈67) in a
+slightly wider one, and the agent (r=22.5 at max scale) anywhere.
+
+**Sampling order**: `[background, obj, agent, rendering]`. Inside
+`obj`: each canonical id in order. Default reset variations resample
+`agent.start_position`, plus per-object `start_position`, `angle`,
+`goal_position`, `goal_angle`. The per-object `enabled` flags are *not*
+in the default list — they come from `options['variation_values']` per
+collection script.
+
+### 3.4 Physics — *as implemented*
+
+- `space.damping = 0.1`. Pymunk semantics: retention-per-second, so
+  per env-step (~0.1 s of sim) bodies lose ~20% of their velocity.
+  Without this, objects coast forever (original PushT runs damping=0
+  but only has one heavy block, so it's not noticeable).
+- Per-identity `mass` and `friction` plumb into all polygon
+  constructors.
+- **Constructor invariant**: order is `body.center_of_gravity →
+  body.angle → body.position`. For shapes with non-trivial COG (T, L,
+  Z, +, small_tee) any other order makes `body.position` read back at
+  a different world location than was set (pymunk rotates around COG,
+  not local origin). Original PushT's `_set_goal_state` docstring warns
+  about this; we apply the same discipline at construction time too.
 
 ### 3.5 Info schema (fixed keys, NaN for disabled)
 
@@ -129,78 +172,116 @@ PushTMulti(
 info = {
     'env_name': 'PushTMulti',
     'pos_agent', 'vel_agent',
-    'pose.<oid>': (3,)        for each oid in objects,    # NaN if disabled
-    'goal_pose.<oid>': (3,)   for each oid in objects,    # NaN if disabled
-    'enabled.<oid>': bool     for each oid in objects,
-    'segmentation': (H,W) uint8,
-    'goal_segmentation': (H,W) uint8,
-    'goal': (H,W,3) uint8,
+    'pose.<oid>':      (3,)   for each oid in `objects`,   NaN if disabled
+    'goal_pose.<oid>': (3,)   for each oid in `objects`,   NaN if disabled
+    'enabled.<oid>':   bool   for each oid in `objects`,
+    'segmentation':       (H,W) uint8,
+    'goal_segmentation':  (H,W) uint8,
+    'goal':               (H,W,3) uint8,
+    'goal_state', 'goal_proprio', 'n_contacts',
     'pixels': added by MegaWrapper,
 }
 ```
 
 Fixed keys with NaN sentinels keep the H5 schema identical across all
-subsets, so one dataloader iterates any of them.
+splits, so one dataloader iterates any of them.
 
 ### 3.6 Per-object segmentation (analytic rasterization)
 
 `_render_segmentation()` returns `(H, W)` uint8:
 
-1. `pygame.Surface` filled with `LABEL_BG`.
-2. For each enabled body (agent + objects), iterate `body.shapes`:
-   - `pymunk.Poly` → world-space vertices via `body.local_to_world` →
-     `pygame.draw.polygon(surface, label, points)`.
-   - `pymunk.Circle` → `pygame.draw.circle(surface, label, center, radius)`.
+1. 8-bit palette `pygame.Surface` filled with `LABEL_BG`.
+2. Rasterize the agent first (label 1), then each enabled object body.
+   `pymunk.Poly` → world-space vertices via `body.local_to_world` →
+   `pygame.draw.polygon(surface, label, points)`.
+   `pymunk.Circle` (agent) → `pygame.draw.circle(surface, label,
+   center, radius)`.
 3. `cv2.resize(..., interpolation=cv2.INTER_NEAREST)` to `render_size`.
 
-Same path renders `goal_segmentation`.
+`goal_segmentation` uses the same path inside the goal-frame
+snapshot/restore.
+
+**Render hygiene**: `space.debug_draw` is restricted to
+`DRAW_SHAPES` only (no collision-point or constraint overlays in
+either the live obs or the goal frame).
 
 ### 3.7 Goal handling
 
-Per-object goal pose `(x, y, θ)`; `θ` ignored for `has_orientation=False`
-(circle).
+Per-object goal pose `(x, y, θ)`. `θ` is ignored in the success
+criterion for objects with `has_orientation=False` (currently no such
+object since C is a Z). The goal frame shows the walls, the agent at
+the goal-state agent position, and every enabled object at its goal
+pose — same render path as the live frame.
 
-`_set_goal_state` extends the existing single-object idempotent
-render-then-restore pattern to N bodies. Same discipline: snapshot, set
-angle BEFORE position, `reindex_shapes_for_body`, render, restore in
-reverse order.
+`_render_goal_frame` extends the single-object idempotent
+render-then-restore pattern to N bodies. Discipline: snapshot all
+bodies' pose+velocity, set each body's angle BEFORE position,
+`space.reindex_shapes_for_body(body)` on every moved body, render,
+restore in reverse order. The goal frame is rendered **before** any
+physics step so it can't pick up cached contact info.
 
-### 3.8 Success / reward / termination
+### 3.8 Non-overlap placement
+
+Sequential placement, not joint rejection. Sort participating entities
+by `bounding_radius` descending; for each, sample its position
+(uniformly within its per-shape spawn box) until it's at least
+`r_self + r_other + margin (8 px)` from every previously placed
+entity. Per-entity cap of 500 attempts; if exhausted, accept and let
+pymunk's first-step solver push penetrating bodies apart.
+
+- `start_position`: the agent participates (so the pusher can't spawn
+  inside an object).
+- `goal_position`: object-only (agent has no goal pose).
+
+Verified clean across 50 seeds for both `{A,B,C}` and `{A..F}`.
+
+### 3.9 Success / reward / termination
 
 ```python
-pos_ok[oid]   = ||pos[oid] - goal_pos[oid]|| < pos_tol
-angle_ok[oid] = angle_diff(angle[oid], goal_angle[oid]) < angle_tol  # skipped if not has_orientation
-obj_success[oid] = pos_ok[oid] and angle_ok[oid]
+pos_ok[oid]   = ||pos[oid] - goal_pos[oid]|| < pos_tol            # 20 px
+angle_ok[oid] = angle_diff(angle[oid], goal_angle[oid]) < angle_tol  # π/9
+                  # skipped if `has_orientation=False`
+obj_success[oid]   = pos_ok[oid] and angle_ok[oid]
 
 joint_success    = all(obj_success[oid] for oid in enabled)   # primary, terminates
 mean_obj_success = mean(obj_success[oid] for oid in enabled)  # secondary
 mean_pos_error   = mean(||pos - goal_pos||)
 mean_angle_error = mean(angle_diff)
 
-reward     = -sum(state_dist[oid] for oid in enabled)
+reward     = -sum(pos_dist + angle_dist*20 over enabled)      # smooth
 terminated = joint_success
 ```
 
 Tolerances do **not** scale with N — keeps numbers comparable to
 existing single-object PushT.
 
-### 3.9 Episode budget
+### 3.10 Episode budget
 
 `max_episode_steps = 60 + 60 * k`. Single PushT uses 100; k=6 → 420.
 
 ---
 
-## 4. Expert policy — `MultiObjectWeakPolicy`
+## 4. Data-collection policy — `MultiObjectWeakPolicy`
 
-Direct generalization of `WeakPolicy`:
+We do **not** have a goal-solving expert. Like the existing PushT
+pipeline, data is collected with a *weak coverage policy* —
+deliberately random with a bias toward object contact — and goals are
+satisfied by the planner at evaluation time (CEM/MPPI over the WM),
+not at collection time. The "expert" name is inherited from the
+existing single-object PushT file naming (`expert_policy.py`).
+
+Mechanism, generalizing `WeakPolicy`:
 
 - Every `switch_every` steps, pick a *focus*. With prob `1 - p_wedge`,
   focus = a uniformly chosen enabled object. With prob `p_wedge`,
-  focus = midpoint between two enabled objects (drives pairwise contact
-  sampling — important for RQ2).
-- Sample uniform action, scale, clip to a square neighborhood around
-  the focus. Same `dist_constraint` mechanic as the existing weak
-  policy.
+  focus = midpoint between two enabled objects (drives pairwise
+  contact sampling — important for RQ2).
+- Sample uniform random action, scale to env units, clip to a
+  `dist_constraint`-sided square neighborhood around the focus point.
+
+For ablation purposes a `MultiObjectGoalPolicy` (per-object PD toward
+goal in turn) is easy to add later, but isn't required for the
+compositional generalization experiment.
 
 ---
 
@@ -254,42 +335,44 @@ parameterized by an `enabled_objects` config (mirrors
 
 ---
 
-## 6. Branch & file layout
+## 6. Branch & file layout — *as implemented*
+
+Branch: `pusht-multi`.
 
 ```
-git checkout -b pusht-multi
-
 stable_worldmodel/envs/pusht_multi/
     __init__.py              # PushTMulti, MultiObjectWeakPolicy, OBJECT_LIBRARY
     env.py                   # PushTMulti gym.Env
     objects.py               # canonical identity registry
     expert_policy.py         # MultiObjectWeakPolicy
-stable_worldmodel/envs/__init__.py    # register swm/PushTMulti-v1
+stable_worldmodel/envs/__init__.py             # registers swm/PushTMulti-v1
 scripts/data/collect_pusht_multi.py
 scripts/data/config/pusht_multi.yaml
-tests/test_pusht_multi.py
-docs/compositional_pusht_plan.md  # this file
+scripts/visualization/visualize_pusht_multi.py # rollout-to-MP4 sanity check
+tests/envs/test_pusht_multi.py                 # 11 invariant tests
+docs/compositional_pusht_plan.md               # this file
 ```
 
-`swm/PushT-v1` and `WeakPolicy` are untouched, so cjepa keeps building.
+`swm/PushT-v1` and the original `WeakPolicy` are untouched, so cjepa
+keeps building unchanged.
 
 ---
 
-## 7. Implementation order
+## 7. Implementation status
 
-1. `objects.py` library + per-identity mass/friction plumbed into
-   existing `add_*` constructors (extracted into a shared helper).
-2. `env.py` skeleton with single-object parity (set
-   `enabled_objects=('A',)` and verify it matches `swm/PushT-v1` for
-   shared variations).
-3. Multi-object reset with non-overlap rejection sampling.
-4. `_render_segmentation()` and `_set_goal_state` extended to N bodies.
-5. Per-object success / reward; `info` schema with NaN sentinels.
-6. `MultiObjectWeakPolicy` (with wedge mode).
-7. `collect_pusht_multi.py` + dataset configs (RQ1 + RQ2 + SC).
-8. Smoke test: 5 episodes per split, assert label stability (B has
-   label 3 in `{A,B}`, `{B,C}`, and `{A,B,C}`), disabled objects have
-   no seg pixels, info-key schema identical across splits.
+All steps below are landed on `pusht-multi`. The corresponding commit
+history is on the branch.
+
+1. ✅ `objects.py` library + per-identity mass/friction/bounding_radius.
+2. ✅ `env.py` skeleton with single-object parity check.
+3. ✅ Multi-object reset with sequential non-overlap placement.
+4. ✅ `_render_segmentation()` and `_render_goal_frame` extended to N bodies.
+5. ✅ Per-object success / reward; `info` schema with NaN sentinels.
+6. ✅ `MultiObjectWeakPolicy` with wedge mode.
+7. ✅ `collect_pusht_multi.py` + hydra config (`scripts/data/config/pusht_multi.yaml`).
+8. ✅ Smoke tests: 11 invariants in `tests/envs/test_pusht_multi.py`
+   covering label stability across subsets, segmentation cleanliness,
+   info-schema identity across splits, bounding-radius non-overlap.
 
 ---
 
@@ -319,12 +402,18 @@ Headline plots:
 
 - **Pairwise interaction frequency**: if the weak policy rarely
   produces A↔B contacts, RQ2 collapses into the trivially-factorizable
-  regime. Mitigation: wedge mode + check contact-frequency stats per
-  shard before training.
-- **Goal-frame variation overrides**: the existing PushT
-  `_set_goal_state` is delicate (angle-before-position, reindex). The
-  N-body extension must preserve this.
-- **Render cost**: extra segmentation pass per step. Acceptable for
-  N≤6; gate behind a flag if it becomes a bottleneck.
-- **Damping change**: `space.damping = 0.85` is a deliberate divergence
-  from `swm/PushT-v1`. Don't backport.
+  regime. Mitigation: wedge mode (`p_wedge=0.3` default) + check
+  per-shard contact-frequency stats from `info['n_contacts']` before
+  training a WM.
+- **Goal-frame variation overrides**: PushT's `_set_goal_state` is
+  delicate (angle-before-position, reindex). Preserved in the N-body
+  extension (see `_render_goal_frame`).
+- **Render cost**: an extra segmentation pass per step. Fine for N≤6;
+  gate behind a flag if profiling shows it dominating.
+- **Damping divergence**: `space.damping = 0.1` (vs original
+  PushT's 0). Don't backport.
+- **No expert policy**: data is collected with a weak random policy.
+  If the SC encoder or WM has trouble distinguishing identities
+  because the weak policy under-samples interesting object motions,
+  consider adding `MultiObjectGoalPolicy` (per-object PD toward goal)
+  to mix in.
