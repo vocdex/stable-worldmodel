@@ -39,6 +39,13 @@ from .objects import (
 
 # Window is the pymunk simulation canvas (pre-resize). Same as PushT.
 WINDOW_SIZE = 512
+# Pymunk segment thickness for the bounding walls. Each wall's collision
+# surface sits `WALL_RADIUS` inside the segment centerline. With the
+# agent's PD controller (k_p=100) building up velocities of ~1000 px/s
+# over a 10-substep env step, dynamic objects can reach single-substep
+# displacements of ~10 px — so 2-px-radius walls (the original PushT
+# default) tunnel readily. 10 px is safe for our action/damping regime.
+WALL_RADIUS = 10
 
 
 # ---------------------------------------------------------------------------
@@ -317,12 +324,14 @@ def _make_agent_subspace(ws: int) -> swm_spaces.Dict:
 def _safe_spawn_range(bounding_radius: float, ws: int, wall_margin: float = 10.0) -> tuple[float, float]:
     """Box bounds for a body's center so it stays inside the walls.
 
-    Walls are at [5, ws-6] (set by `_segment`); add a small `wall_margin`
-    so a freshly placed body doesn't kiss a wall and trigger contacts
-    on the first env step.
+    Walls run along (5, ws-6) but their collision surfaces sit
+    `WALL_RADIUS` inside the centerline (Pymunk Segment is a capsule),
+    so the *inside* wall surface is at `5 + WALL_RADIUS` and
+    `ws - 6 - WALL_RADIUS`. `wall_margin` adds breathing room so a
+    freshly placed body doesn't kiss a wall.
     """
-    low = 5 + bounding_radius + wall_margin
-    high = ws - 6 - bounding_radius - wall_margin
+    low = 5 + WALL_RADIUS + bounding_radius + wall_margin
+    high = ws - 6 - WALL_RADIUS - bounding_radius - wall_margin
     if low >= high:
         # Object is too big for the workspace at this scale; collapse to
         # a single feasible point (the geometric center).
@@ -621,6 +630,19 @@ class PushTMulti(gym.Env):
         self.latest_action = action
         if self.relative:
             action = self.agent.position + np.asarray(action) * self.action_scale
+        # Clamp the PD target to a safe inner box. The agent is kinematic
+        # — its position is dictated by the PD controller, not by the
+        # static walls — so if the target lands outside the workspace the
+        # agent walks there directly and can drag dynamic bodies through
+        # the wall on the way. Use the agent's current bounding radius
+        # plus the wall thickness so the agent's body never touches a
+        # wall, regardless of action direction or magnitude.
+        agent_r = agent_bounding_radius(
+            float(self.variation_space['agent']['scale'].value)
+        )
+        inner_low = 5 + WALL_RADIUS + agent_r
+        inner_high = WINDOW_SIZE - 6 - WALL_RADIUS - agent_r
+        action = np.clip(action, inner_low, inner_high)
 
         for _ in range(n_steps):
             acc = self.k_p * (action - self.agent.position) + self.k_v * (
@@ -726,10 +748,10 @@ class PushTMulti(gym.Env):
 
         # Walls.
         walls = [
-            self._segment((5, 506), (5, 5), 2),
-            self._segment((5, 5), (506, 5), 2),
-            self._segment((506, 5), (506, 506), 2),
-            self._segment((5, 506), (506, 506), 2),
+            self._segment((5, 506), (5, 5), WALL_RADIUS),
+            self._segment((5, 5), (506, 5), WALL_RADIUS),
+            self._segment((506, 5), (506, 506), WALL_RADIUS),
+            self._segment((5, 506), (506, 506), WALL_RADIUS),
         ]
         self.space.add(*walls)
 
