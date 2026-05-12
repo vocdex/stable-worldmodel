@@ -186,21 +186,33 @@ def test_goal_segmentation_present_and_aligned():
 
 @pytest.mark.parametrize('seed', [0, 1, 2, 3, 4])
 def test_no_overlap_in_starts_or_goals(seed):
-    env = _make_env(enabled=('A', 'B', 'C'))
+    """Sampled start/goal positions must respect each pair's
+    sum-of-bounding-radii separation (with a small slack to account for
+    the `max_iters` early-exit and floating-point noise)."""
+    objects = ('A', 'B', 'C')
+    env = _make_env(enabled=objects)
     try:
         _, info = env.reset(seed=seed)
-        positions = np.stack([info[f'pose.{o}'][:2] for o in ('A', 'B', 'C')])
-        goal_positions = np.stack(
-            [info[f'goal_pose.{o}'][:2] for o in ('A', 'B', 'C')]
+        radii = np.array(
+            [OBJECT_LIBRARY[o].bounding_radius for o in objects],
+            dtype=np.float64,
         )
-        for arr, name in ((positions, 'start'), (goal_positions, 'goal')):
+        min_sep = radii[:, None] + radii[None, :]
+        np.fill_diagonal(min_sep, 0.0)
+
+        for arr, name in (
+            (np.stack([info[f'pose.{o}'][:2] for o in objects]), 'start'),
+            (np.stack([info[f'goal_pose.{o}'][:2] for o in objects]), 'goal'),
+        ):
             d = np.linalg.norm(arr[:, None] - arr[None, :], axis=-1)
             np.fill_diagonal(d, np.inf)
-            # Min separation should be at least one object scale apart;
-            # use a lenient threshold (the rejection sampler aims for
-            # 1.5*max_scale, but allow some slack for the rare hit-cap case).
-            assert d.min() >= 20, (
-                f'{name} positions too close at seed={seed}: min={d.min()}'
+            slack = d - min_sep
+            # Allow a small tolerance: rejection sampler aims for
+            # +8 px margin, accept anything within -2 px of zero (in
+            # case max_iters was exhausted; physics will resolve).
+            assert slack.min() >= -2, (
+                f'{name} bodies overlap at seed={seed}: '
+                f'min_slack={slack.min():.1f} px'
             )
     finally:
         env.close()

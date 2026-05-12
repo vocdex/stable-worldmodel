@@ -44,6 +44,43 @@ class ObjectSpec:
     has_orientation: bool
     label: int
 
+    @property
+    def bounding_radius(self) -> float:
+        """Rotation-invariant circumscribed-circle radius (pixels).
+
+        Worst-case distance from the body's local origin to any point on
+        the shape, computed from the polygon vertex sets defined in
+        `pusht_multi.env._add_*`. Used by the start/goal-position
+        rejection sampler to enforce non-overlap independent of angle.
+        """
+        s = self.scale
+        if self.shape == 'T':
+            # stem extends to y = 4*s with x = ±s/2
+            return float(((s / 2) ** 2 + (4 * s) ** 2) ** 0.5)
+        if self.shape == 'small_tee':
+            return float(((s / 2) ** 2 + (2 * s) ** 2) ** 0.5)
+        if self.shape == 'L':
+            # 60 x 30 rectangles at scale=30 → diag at far corner
+            return float(((2 * s) ** 2 + s ** 2) ** 0.5)
+        if self.shape == 'Z':
+            return float(((s) ** 2 + (s / 2) ** 2) ** 0.5) * 2  # ~conservative
+        if self.shape == 'square':
+            return float((2 * (s ** 2)) ** 0.5)
+        if self.shape == 'I':
+            return float(((s / 2) ** 2 + (2 * s) ** 2) ** 0.5)
+        if self.shape == '+':
+            return float(((3 * s / 2) ** 2 + (s / 2) ** 2) ** 0.5)
+        if self.shape == 'o':
+            return float(0.375 * s)
+        raise ValueError(f'Unknown shape {self.shape!r}')
+
+
+# Effective bounding radius of the kinematic agent (always a circle).
+# Mirrors `_add_kinematic_circle`: radius = 0.375 * scale, agent default
+# scale = 40 → 15 px. Used by the overlap sampler.
+def agent_bounding_radius(agent_scale: float) -> float:
+    return float(0.375 * agent_scale)
+
 
 OBJECT_LIBRARY: dict[str, ObjectSpec] = {
     'A': ObjectSpec(shape='T',         color='LightSlateGray', scale=30, mass=1.0, friction=1.0, has_orientation=True,  label=2),

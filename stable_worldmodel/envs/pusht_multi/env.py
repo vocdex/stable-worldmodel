@@ -28,7 +28,13 @@ from pymunk.vec2d import Vec2d
 from stable_worldmodel import spaces as swm_spaces
 
 from ..utils import DrawOptions
-from .objects import LABEL_AGENT, LABEL_BG, OBJECT_LIBRARY, ObjectSpec
+from .objects import (
+    LABEL_AGENT,
+    LABEL_BG,
+    OBJECT_LIBRARY,
+    ObjectSpec,
+    agent_bounding_radius,
+)
 
 
 # Window is the pymunk simulation canvas (pre-resize). Same as PushT.
@@ -554,8 +560,11 @@ class PushTMulti(gym.Env):
 
         # Enforce non-overlap on per-object start positions and goal
         # positions independently, by resampling overlapping objects.
-        self._resolve_overlap('start_position')
-        self._resolve_overlap('goal_position')
+        # The agent's start position participates in the start-pose check
+        # (so the pusher doesn't spawn inside an object). Goal positions
+        # are object-only (the agent has no goal pose to satisfy).
+        self._resolve_overlap('start_position', include_agent=True)
+        self._resolve_overlap('goal_position', include_agent=False)
 
         # Build the pymunk scene from the resolved variation values.
         self._setup_scene()
@@ -605,37 +614,76 @@ class PushTMulti(gym.Env):
     # Variation helpers
     # ------------------------------------------------------------------
 
-    def _resolve_overlap(self, key: str, max_iters: int = 50) -> None:
-        """Resample per-object positions until no pair is within `min_sep`.
+    def _resolve_overlap(
+        self,
+        key: str,
+        include_agent: bool = False,
+        max_iters: int = 200,
+        margin: float = 8.0,
+    ) -> None:
+        """Resample positions until no pair of bodies overlaps.
 
-        `key` is either 'start_position' or 'goal_position'. Only enabled
-        objects participate. Min separation is 1.5 × max scale among the
-        enabled objects, which is a generous heuristic that works for the
-        scale range used by `OBJECT_LIBRARY`.
+        Uses each shape's rotation-invariant *bounding radius* (the
+        circumscribed-circle radius of its polygon vertices, see
+        `ObjectSpec.bounding_radius`). Min separation for a pair of
+        bodies (i, j) is `r_i + r_j + margin`, so a T (r≈121 px) and an
+        I (r≈62 px) must be at least ~191 px apart. This is conservative
+        — bodies in some orientations can sit closer without colliding —
+        but it guarantees no overlap at *any* sampled angle.
+
+        `key`:
+          - 'start_position' — agent participates iff `include_agent=True`.
+          - 'goal_position' — agent does not have a goal pose.
+
+        If no valid configuration is found after `max_iters` resamples,
+        we accept the last sample silently; the physics step at the
+        first env step will then push penetrating bodies apart. The
+        warning threshold of `max_iters=200` is high enough that this
+        only triggers when the spawn-range geometry genuinely can't fit
+        the requested object set.
         """
-        enabled = sorted(self.enabled)
-        if len(enabled) < 2:
+        # Build the list of (entity_key, radius) participants. entity_key is
+        # ('agent',) for the pusher or ('obj', oid) for an object.
+        entities: list[tuple[tuple[str, ...], float]] = []
+        for oid in sorted(self.enabled):
+            r = self.specs[oid].bounding_radius
+            entities.append((('obj', oid), r))
+        if include_agent:
+            agent_scale = float(self.variation_space['agent']['scale'].value)
+            entities.append((('agent',), agent_bounding_radius(agent_scale)))
+        if len(entities) < 2:
             return
-        max_scale = max(
-            float(self.variation_space['obj'][oid]['scale'].value)
-            for oid in enabled
-        )
-        min_sep = 1.5 * max_scale
+
+        radii = np.array([r for _, r in entities], dtype=np.float64)
+        # min_sep_pair[i, j] = r_i + r_j + margin
+        min_sep_pair = radii[:, None] + radii[None, :] + margin
+
+        def _position(path: tuple[str, ...]) -> np.ndarray:
+            if path[0] == 'agent':
+                return self.variation_space['agent']['start_position'].value
+            return self.variation_space['obj'][path[1]][key].value
+
+        def _resample(path: tuple[str, ...]) -> None:
+            if path[0] == 'agent':
+                self.variation_space['agent']['start_position'].sample()
+            else:
+                self.variation_space['obj'][path[1]][key].sample()
 
         for _ in range(max_iters):
-            positions = np.stack([
-                self.variation_space['obj'][oid][key].value for oid in enabled
-            ])
-            # Pairwise distances (upper triangle).
+            positions = np.stack([_position(p) for p, _ in entities])
             diffs = positions[:, None, :] - positions[None, :, :]
             dists = np.linalg.norm(diffs, axis=-1)
+            # Mask self-distance.
             np.fill_diagonal(dists, np.inf)
-            if dists.min() >= min_sep:
+            slack = dists - min_sep_pair
+            if slack.min() >= 0:
                 return
-            # Resample one offender (the closest pair's first element).
-            i, j = np.unravel_index(np.argmin(dists), dists.shape)
-            offender = enabled[min(i, j)]
-            self.variation_space['obj'][offender][key].sample()
+            # Resample the offender from the tightest pair. Pick the first
+            # of the pair deterministically (rng is in the variation space).
+            i, j = np.unravel_index(np.argmin(slack), slack.shape)
+            offender = entities[min(i, j)][0]
+            _resample(offender)
+        # Fell through without converging — accept the last sample.
 
     # ------------------------------------------------------------------
     # Scene construction / state
