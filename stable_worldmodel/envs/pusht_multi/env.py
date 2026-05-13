@@ -39,13 +39,6 @@ from .objects import (
 
 # Window is the pymunk simulation canvas (pre-resize). Same as PushT.
 WINDOW_SIZE = 512
-# Pymunk segment thickness for the bounding walls. Each wall's collision
-# surface sits `WALL_RADIUS` inside the segment centerline. With the
-# agent's PD controller (k_p=100) building up velocities of ~1000 px/s
-# over a 10-substep env step, dynamic objects can reach single-substep
-# displacements of ~10 px — so 2-px-radius walls (the original PushT
-# default) tunnel readily. 10 px is safe for our action/damping regime.
-WALL_RADIUS = 10
 
 
 # ---------------------------------------------------------------------------
@@ -321,17 +314,17 @@ def _make_agent_subspace(ws: int) -> swm_spaces.Dict:
     )
 
 
-def _safe_spawn_range(bounding_radius: float, ws: int, wall_margin: float = 10.0) -> tuple[float, float]:
-    """Box bounds for a body's center so it stays inside the walls.
+def _safe_spawn_range(bounding_radius: float, ws: int, margin: float = 10.0) -> tuple[float, float]:
+    """Box bounds for a body's center so its bounding circle starts
+    fully inside the rendered canvas `[0, ws]`.
 
-    Walls run along (5, ws-6) but their collision surfaces sit
-    `WALL_RADIUS` inside the centerline (Pymunk Segment is a capsule),
-    so the *inside* wall surface is at `5 + WALL_RADIUS` and
-    `ws - 6 - WALL_RADIUS`. `wall_margin` adds breathing room so a
-    freshly placed body doesn't kiss a wall.
+    The env has no walls — once an episode runs, the policy is free to
+    push objects off-frame — but we want the *initial* pose to be
+    visible so the encoder and planner have a well-defined starting
+    scene.
     """
-    low = 5 + WALL_RADIUS + bounding_radius + wall_margin
-    high = ws - 6 - WALL_RADIUS - bounding_radius - wall_margin
+    low = bounding_radius + margin
+    high = ws - bounding_radius - margin
     if low >= high:
         # Object is too big for the workspace at this scale; collapse to
         # a single feasible point (the geometric center).
@@ -341,8 +334,8 @@ def _safe_spawn_range(bounding_radius: float, ws: int, wall_margin: float = 10.0
 
 
 def _make_object_subspace(spec: ObjectSpec, enabled_default: bool, ws: int) -> swm_spaces.Dict:
-    # Per-shape spawn box so the bounding circle fits inside the walls
-    # without the rejection sampler having to handle wall clearance.
+    # Per-shape spawn box so the bounding circle starts inside the
+    # canvas (purely to make the initial scene visible — no walls).
     sp_low, sp_high = _safe_spawn_range(spec.bounding_radius, ws)
     center = (sp_low + sp_high) / 2
     return swm_spaces.Dict(
@@ -674,18 +667,15 @@ class PushTMulti(gym.Env):
         self.latest_action = action
         if self.relative:
             action = self.agent.position + np.asarray(action) * self.action_scale
-        # Clamp the PD target to a safe inner box. The agent is kinematic
-        # — its position is dictated by the PD controller, not by the
-        # static walls — so if the target lands outside the workspace the
-        # agent walks there directly and can drag dynamic bodies through
-        # the wall on the way. Use the agent's current bounding radius
-        # plus the wall thickness so the agent's body never touches a
-        # wall, regardless of action direction or magnitude.
+        # Clamp the PD target to the rendered canvas so the agent
+        # itself stays on-screen — the encoder/planner need a visible
+        # pusher to track. Objects may drift off-frame under hard
+        # pushes (no walls), but the agent shouldn't lead them there.
         agent_r = agent_bounding_radius(
             float(self.variation_space['agent']['scale'].value)
         )
-        inner_low = 5 + WALL_RADIUS + agent_r
-        inner_high = WINDOW_SIZE - 6 - WALL_RADIUS - agent_r
+        inner_low = agent_r
+        inner_high = WINDOW_SIZE - agent_r
         action = np.clip(action, inner_low, inner_high)
 
         for _ in range(n_steps):
@@ -790,14 +780,11 @@ class PushTMulti(gym.Env):
         self.bodies = {}
         self.body_labels = {}
 
-        # Walls.
-        walls = [
-            self._segment((5, 506), (5, 5), WALL_RADIUS),
-            self._segment((5, 5), (506, 5), WALL_RADIUS),
-            self._segment((506, 5), (506, 506), WALL_RADIUS),
-            self._segment((5, 506), (506, 506), WALL_RADIUS),
-        ]
-        self.space.add(*walls)
+        # No walls. Agent is kinematic (walls don't affect it anyway), and
+        # bounding the scene only created visual clutter for the encoder
+        # and the illusion of containment that high-impulse CEM pushes
+        # could break via tunneling. Goal-distance reward already penalises
+        # off-frame drift.
 
         # Agent (kinematic circle, PD-controlled).
         agent_v = self.variation_space['agent']
@@ -839,11 +826,6 @@ class PushTMulti(gym.Env):
 
         self.space.on_collision(0, 0, post_solve=self._handle_collision)
         self.n_contact_points = 0
-
-    def _segment(self, a, b, radius):
-        shape = pymunk.Segment(self.space.static_body, a, b, radius)
-        shape.color = pygame.Color('LightGray')
-        return shape
 
     def _compose_full_state(self, at_goal: bool) -> np.ndarray:
         """Return a fixed-shape state vector regardless of which objects
