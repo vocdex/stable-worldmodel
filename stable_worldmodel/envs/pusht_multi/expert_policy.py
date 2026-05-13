@@ -148,9 +148,11 @@ class MultiObjectGoalPolicy(BasePolicy):
     def __init__(
         self,
         push_distance: float = 60.0,
-        noise_std: float = 0.15,
+        noise_std: float = 0.05,
         switch_every: int = 40,
         switch_pos_tol: float = 18.0,
+        max_step: float = 0.3,
+        action_smoothing: float = 0.4,
         seed: int | None = None,
         **kwargs,
     ):
@@ -158,14 +160,31 @@ class MultiObjectGoalPolicy(BasePolicy):
         assert push_distance > 0
         assert 0 <= noise_std
         assert switch_every >= 1
+        assert 0 < max_step <= 1.0
+        assert 0.0 <= action_smoothing <= 1.0
         self.push_distance = float(push_distance)
         self.noise_std = float(noise_std)
         self.switch_every = int(switch_every)
         self.switch_pos_tol = float(switch_pos_tol)
+        # Cap on per-step displacement in [-1,1] action units. Without
+        # this, far targets produce `delta = (target - agent)/action_scale`
+        # ≫ 1 and the clip saturates — std-PushT expert sits near
+        # |a| ≈ 0.27, so default 0.3 matches that step-size.
+        self.max_step = float(max_step)
+        # Exponential moving-average smoothing on the executed action:
+        # aₜ = α · raw + (1 − α) · aₜ₋₁. A purely reactive state-based
+        # policy can still produce sign flips when the agent oscillates
+        # around its target; EMA filters out the high-frequency component
+        # without changing the policy's intent. action_smoothing is α
+        # (in [0, 1]); 0 means no smoothing, lower → smoother. Default
+        # 0.4 ≈ time-constant of ~2 steps, matching std-PushT expert
+        # |Δa| ≈ 0.085.
+        self.action_smoothing = float(action_smoothing)
         self.set_seed(seed)
         self._focus: list[str | None] = []
         self._focus_age: np.ndarray | None = None
         self._focus_side: list[int] = []  # which side to circumnavigate
+        self._prev_action: list[np.ndarray | None] = []
 
     def set_seed(self, seed: int | None) -> None:
         self.seed = seed
@@ -191,6 +210,7 @@ class MultiObjectGoalPolicy(BasePolicy):
             self._focus = [None] * n
             self._focus_age = np.zeros(n, dtype=np.int64)
             self._focus_side = [1] * n
+            self._prev_action = [None] * n
 
     def _pick_focus(self, env, current: str | None) -> str | None:
         """Pick the unsatisfied object farthest from its goal. Returns
@@ -314,12 +334,25 @@ class MultiObjectGoalPolicy(BasePolicy):
 
             # Convert world-space target into the env's [-1, 1] action
             # (relative mode: action * action_scale = delta from current).
-            # Action magnitude scales with distance to target — large
-            # when far, small when close — so the agent doesn't teleport
-            # past the target every step (which causes oscillation).
+            # Scale the step so its magnitude doesn't exceed `max_step`
+            # — without this cap, far targets produce delta ≫ 1 and the
+            # final clip saturates to ±1, producing the harshest possible
+            # pushes. With max_step=0.3 the agent moves ~30 px/step,
+            # matching the std-PushT expert.
             delta = (target - agent_pos) / env.action_scale
+            mag = float(np.linalg.norm(delta))
+            if mag > self.max_step:
+                delta = delta * (self.max_step / mag)
             delta = delta + self.rng.normal(0, self.noise_std, size=2)
-            actions[i] = np.clip(delta, -1.0, 1.0)
+            raw = np.clip(delta, -1.0, 1.0)
+            # EMA smoothing against the previous executed action — see
+            # `action_smoothing` in __init__. 1.0 means no smoothing.
+            if self.action_smoothing < 1.0 and self._prev_action[i] is not None:
+                alpha = self.action_smoothing
+                raw = alpha * raw + (1 - alpha) * self._prev_action[i]
+                raw = np.clip(raw, -1.0, 1.0)
+            actions[i] = raw
+            self._prev_action[i] = np.asarray(raw, dtype=np.float64).copy()
             self._focus_age[i] += 1
 
         return actions
@@ -364,11 +397,13 @@ class MultiObjectCEMPolicy(BasePolicy):
         n_iter: int = 2,
         topk: int = 8,
         replan_every: int = 3,
-        init_std: float = 0.5,
+        init_std: float = 0.3,
         action_noise_std: float = 0.05,
         angle_weight: float = 30.0,
         action_penalty: float = 1.5,
-        action_clip: float = 0.8,
+        action_clip: float = 0.3,
+        smoothness_weight: float = 8.0,
+        warm_start_from_previous: bool = True,
         seed: int | None = None,
         **kwargs,
     ):
@@ -387,17 +422,30 @@ class MultiObjectCEMPolicy(BasePolicy):
         # over the rollout. Without this, CEM frequently saturates the
         # action to ±1 (full-speed pushes) because terminal cost has no
         # opinion on effort — the resulting contacts look way harder
-        # than the standard PushT expert (which is human teleop, naturally
-        # gentle). With this penalty, CEM trades reach-the-goal against
-        # don't-shove-too-hard, producing visually smoother trajectories
-        # and reducing rare tunneling events from extreme impulses.
+        # than the standard PushT expert (human teleop, naturally gentle).
         self.action_penalty = float(action_penalty)
         # Tighter action clip during CEM sampling — agent never commands
-        # full-speed unless the cost gradient really demands it.
+        # full-speed unless the cost gradient really demands it. Default
+        # 0.3 matches the standard PushT expert's typical |a| ≈ 0.27.
         self.action_clip = float(action_clip)
+        # Smoothness penalty: cost += smoothness_weight * Σ‖aₜ − aₜ₋₁‖²
+        # over the rollout, *including* the boundary to the previously
+        # executed action. Without this, CEM is free to flip the agent's
+        # direction every step because terminal cost is direction-agnostic
+        # over the horizon; standard PushT expert action sign-flip rate is
+        # ~7%, ours was 27%.
+        self.smoothness_weight = float(smoothness_weight)
+        # When True, the CEM mean is initialised by shifting the previous
+        # elite plan left by `replan_every` steps (pad zeros at the tail).
+        # This is the standard receding-horizon warm-start and is the
+        # second-largest source of smoothness — without it every replan
+        # restarts from a heuristic mean and the plan jumps at boundaries.
+        self.warm_start_from_previous = bool(warm_start_from_previous)
         self.set_seed(seed)
         self._plan: list[np.ndarray] = []  # cached per-env plan tail
         self._step: int = 0
+        self._last_plan: np.ndarray | None = None  # for warm-start
+        self._last_executed_action: np.ndarray | None = None  # smooth boundary
 
     def set_seed(self, seed: int | None) -> None:
         self.seed = seed
@@ -444,19 +492,26 @@ class MultiObjectCEMPolicy(BasePolicy):
                 cost += ang_d * self.angle_weight
         return cost
 
-    def _rollout_cost(self, env, action_seq: np.ndarray) -> float:
+    def _rollout_cost(
+        self, env, action_seq: np.ndarray, prev_action: np.ndarray
+    ) -> float:
         """Apply `action_seq` (H, 2) to the env step-by-step.
 
-        Cost = terminal joint distance + action-magnitude penalty,
-        where the penalty discourages full-speed pushes. Pure terminal
-        cost rewarded saturated actions and produced contacts much
-        harder than the standard PushT expert (human teleop, gentle).
+        Cost = terminal joint distance + action effort + smoothness,
+        where smoothness penalises both inner-rollout direction changes
+        and a single-step boundary to the action just executed.
         """
         for h in range(action_seq.shape[0]):
             env.step(action_seq[h])
         terminal = self._cost(env)
         effort = self.action_penalty * float(np.sum(action_seq ** 2))
-        return terminal + effort
+        # Inner-rollout smoothness.
+        dseq = np.diff(action_seq, axis=0)
+        smooth_inner = float(np.sum(dseq ** 2))
+        # Boundary to the previously executed action.
+        smooth_boundary = float(np.sum((action_seq[0] - prev_action) ** 2))
+        smoothness = self.smoothness_weight * (smooth_inner + smooth_boundary)
+        return terminal + effort + smoothness
 
     def _warm_start(self, env) -> np.ndarray:
         """Heuristic init: aim at the "behind" point of the focus object
@@ -514,8 +569,25 @@ class MultiObjectCEMPolicy(BasePolicy):
         snapshot = env._snapshot_bodies()
         H, K = self.horizon, self.num_samples
 
-        mean = self._warm_start(env)
+        # Warm-start: shift the last elite plan left by `replan_every` and
+        # pad the tail with zeros. Falls back to the focus-aware heuristic
+        # on the very first replan or after an episode reset.
+        if self.warm_start_from_previous and self._last_plan is not None:
+            shift = self.replan_every
+            prev = self._last_plan
+            mean = np.zeros((H, 2), dtype=np.float64)
+            copy_len = max(0, H - shift)
+            if copy_len > 0:
+                mean[:copy_len] = prev[shift:shift + copy_len]
+        else:
+            mean = self._warm_start(env)
+
         std = np.full((H, 2), self.init_std, dtype=np.float64)
+        prev_action = (
+            self._last_executed_action
+            if self._last_executed_action is not None
+            else np.zeros(2, dtype=np.float64)
+        )
 
         for _ in range(self.n_iter):
             # Sample K candidate sequences and clip to action box.
@@ -528,7 +600,7 @@ class MultiObjectCEMPolicy(BasePolicy):
             costs = np.empty(K, dtype=np.float64)
             for k in range(K):
                 env._restore_bodies(snapshot)
-                costs[k] = self._rollout_cost(env, candidates[k])
+                costs[k] = self._rollout_cost(env, candidates[k], prev_action)
 
             # Pick elites, refit Gaussian.
             elite_idx = np.argsort(costs)[: self.topk]
@@ -538,6 +610,7 @@ class MultiObjectCEMPolicy(BasePolicy):
 
         # Final restore so the live env pose is exactly the pre-CEM state.
         env._restore_bodies(snapshot)
+        self._last_plan = mean.copy()
         return mean
 
     def get_action(self, info_dict, **kwargs):
@@ -552,9 +625,7 @@ class MultiObjectCEMPolicy(BasePolicy):
         action = self._plan.pop(0)
         action = action + self.rng.normal(0, self.action_noise_std, size=2)
         action = np.clip(action, -1.0, 1.0).astype(np.float32)
+        self._last_executed_action = action.astype(np.float64)
         self._step += 1
 
-        # Reset cached plan/step on episode boundaries — we detect this by
-        # the agent's position being far from where the plan last left it,
-        # which is the simplest signal available in this interface.
         return action[None, :]  # shape (n_envs=1, 2)

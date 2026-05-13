@@ -62,21 +62,27 @@ policy:
   p_wedge: 0.3
   # MultiObjectGoalPolicy params
   push_distance: 60
-  noise_std: 0.15
+  noise_std: 0.05               # std on the action, std-PushT used ~0.05
   expert_switch_every: 40
   switch_pos_tol: 18
+  expert_max_step: 0.3          # cap on per-step displacement magnitude
+  expert_action_smoothing: 0.4  # EMA on action; 1.0 = none, 0.4 ≈ 2-step τ
   # MultiObjectCEMPolicy params
   cem_horizon: 8
   cem_num_samples: 64
   cem_n_iter: 2
   cem_topk: 8
   cem_replan_every: 3
-  cem_init_std: 0.5
+  cem_init_std: 0.3
   cem_action_noise_std: 0.05
   cem_angle_weight: 30.0
-  # Action-smoothness tuning — without these the CEM saturates to ±1.0
-  # on almost every step, producing harder pushes than the human-teleop
-  # standard-PushT expert. Empirical sweet spot at (1.5, 0.8): 93%
-  # single-object success on A, median |a|≈0.59, ~1% saturated frames.
-  cem_action_penalty: 1.5    # penalize ||a||² in CEM cost
-  cem_action_clip: 0.8       # cap CEM-sampled actions to ±this
+  cem_action_penalty: 1.5     # cost += penalty * Σ‖a‖² in rollout
+  cem_action_clip: 0.3        # cap CEM-sampled actions to ±this
+  # Smoothness penalty: cost += smoothness_weight * Σ‖aₜ − aₜ₋₁‖² over
+  # the rollout including the boundary to the previously executed action.
+  # Standard PushT expert mean |Δa| ≈ 0.085 and sign-flip rate ~7%;
+  # without this term ours were 0.44 and 27% respectively.
+  cem_smoothness_weight: 8.0
+  # Warm-start the CEM mean from the previous elite plan (shifted left
+  # by `replan_every`, padded with zeros). Stops plan-boundary jumps.
+  cem_warm_start_from_previous: true

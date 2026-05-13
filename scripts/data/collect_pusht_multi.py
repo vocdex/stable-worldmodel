@@ -82,6 +82,8 @@ def _build_policy(cfg):
             noise_std=cfg.policy.noise_std,
             switch_every=cfg.policy.expert_switch_every,
             switch_pos_tol=cfg.policy.switch_pos_tol,
+            max_step=cfg.policy.get('expert_max_step', 0.3),
+            action_smoothing=cfg.policy.get('expert_action_smoothing', 0.4),
             seed=cfg.seed,
         )
     if kind == 'cem':
@@ -96,6 +98,10 @@ def _build_policy(cfg):
             angle_weight=cfg.policy.cem_angle_weight,
             action_penalty=cfg.policy.cem_action_penalty,
             action_clip=cfg.policy.cem_action_clip,
+            smoothness_weight=cfg.policy.get('cem_smoothness_weight', 8.0),
+            warm_start_from_previous=cfg.policy.get(
+                'cem_warm_start_from_previous', True
+            ),
             seed=cfg.seed,
         )
     raise ValueError(f'Unknown policy kind {kind!r}; expected weak|expert|cem')
