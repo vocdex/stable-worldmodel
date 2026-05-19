@@ -881,6 +881,12 @@ class World:
             for i in range(self.num_envs):
                 options[i]['variation'] = variation_overrides.get('variation', [])
                 options[i]['variation_values'] = variation_overrides.get('variation_values', {})
+                # Force the env to render a fresh goal frame under the active
+                # variation; otherwise envs like OGBench-Cube leave
+                # `_cur_goal_rendered = None` (its `_render_goal` defaults to
+                # False) and the re-render np.stack below produces an
+                # object-array of Nones, crashing downstream consumers.
+                options[i]['render_goal'] = True
 
         init_step.update(deepcopy(goal_step))
         self.reset(seed=seeds, options=options)  # set seeds for all envs
