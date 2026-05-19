@@ -118,30 +118,61 @@ class MultiObjectWeakPolicy(BasePolicy):
 
 
 class MultiObjectGoalPolicy(BasePolicy):
-    """Greedy goal-driving expert with action noise.
+    """Greedy goal-driving expert with action noise + orientation control.
 
-    Each step (or every `switch_every` steps), pick a *focus* object —
-    the unsatisfied object farthest from its goal — and drive the agent
-    to a "push-from-behind" target relative to the goal direction. Once
-    the focus object is within `switch_pos_tol` of its goal it's
-    considered locally satisfied and the policy switches.
+    Three-phase controller per focus object:
 
-    Action noise (Gaussian, std=`noise_std` in the [-1, 1] action space)
-    breaks symmetry and makes trajectories non-deterministic, mirroring
-    the noisy-expert protocol used to collect the 18k-trajectory PushT
-    dataset for DINO-WM. The expert is *not* perfect (no angle control
-    here — angle is left to the noise + dynamics), which is intentional:
-    we want diverse near-goal trajectories, not optimal ones.
+      STAGE   — agent is far from the "behind" point on the obj→goal
+                axis; aim at that staging point with a lateral offset
+                so the agent walks around the obj instead of through
+                it.
+      PUSH    — agent is already behind the obj on the goal side; aim
+                slightly past the obj to nudge it toward the goal.
+      ORIENT  — pos_err < `orient_pos_threshold` and the obj has
+                orientation that's still off by more than
+                `switch_ang_tol`. Push at a lever-arm point offset
+                perpendicular to obj→goal so the resulting force
+                generates torque in the sign(Δθ) direction. Side
+                effects: a small lateral translation, corrected when
+                the policy switches back to STAGE/PUSH on the next
+                focus cycle.
+
+    Focus picking ("which obj to drive next"):
+      An obj is *unsatisfied* if pos_err > pos_tol OR (has_orientation
+      AND ang_err > ang_tol). The unsatisfied obj with the highest
+      combined score `pos_err + 30 · ang_err` is the next focus
+      (weight matches the env / CEM joint cost).
+
+    Workspace bound:
+      The world-space agent target is clipped to `[margin, ws - margin]`
+      so the policy never aims off-screen and drags an obj out of view.
+
+    Action smoothness:
+      `max_step` caps per-step displacement to ≈ standard-PushT step
+      size; `action_smoothing` EMA-blends with the previous executed
+      action to cut sign-flip rate. See std-PushT comparison in the
+      branch's docs.
 
     Args:
-        push_distance: how far behind the object the agent aims (in
-            pymunk pixels). Roughly the object's bounding radius plus
-            a margin.
+        push_distance: staging distance behind the object (pixels).
         noise_std: Gaussian noise std added to the action.
-        switch_every: hard cap on consecutive steps targeting the same
-            focus, so the policy doesn't get stuck pushing in vain.
-        switch_pos_tol: focus is "locally satisfied" when the object's
-            position is within this many pixels of its goal.
+        switch_every: hard cap on consecutive steps targeting the
+            same focus.
+        switch_pos_tol: pos-tolerance for considering a focus
+            "satisfied" along position.
+        switch_ang_tol: ang-tolerance (rad) for considering a focus
+            "satisfied" along angle.
+        orient_pos_threshold: position-error threshold below which
+            the policy switches into ORIENT mode for the current
+            focus.
+        orient_lever_frac: fraction of the obj's bounding_radius used
+            as the lever-arm radius. 1.0 is on the edge; 0.7 sits
+            slightly inside so the agent has room to push.
+        orient_stage_distance_frac: how far the agent stages from the
+            lever-arm contact point, as a fraction of push_distance.
+        workspace_margin: clip target to [margin, ws - margin].
+        max_step: per-step displacement cap in [−1, 1] action units.
+        action_smoothing: EMA coefficient on actions (α ∈ [0, 1]).
         seed: RNG seed.
     """
 
@@ -151,8 +182,13 @@ class MultiObjectGoalPolicy(BasePolicy):
         noise_std: float = 0.05,
         switch_every: int = 40,
         switch_pos_tol: float = 18.0,
-        max_step: float = 0.3,
-        action_smoothing: float = 0.4,
+        switch_ang_tol: float = np.pi / 9,
+        orient_pos_threshold: float = 40.0,
+        orient_lever_frac: float = 0.7,
+        orient_stage_distance_frac: float = 0.7,
+        workspace_margin: float = 30.0,
+        max_step: float = 0.25,
+        action_smoothing: float = 1.0,
         seed: int | None = None,
         **kwargs,
     ):
@@ -162,10 +198,18 @@ class MultiObjectGoalPolicy(BasePolicy):
         assert switch_every >= 1
         assert 0 < max_step <= 1.0
         assert 0.0 <= action_smoothing <= 1.0
+        assert 0 < orient_lever_frac <= 1.0
+        assert orient_stage_distance_frac > 0
+        assert workspace_margin >= 0
         self.push_distance = float(push_distance)
         self.noise_std = float(noise_std)
         self.switch_every = int(switch_every)
         self.switch_pos_tol = float(switch_pos_tol)
+        self.switch_ang_tol = float(switch_ang_tol)
+        self.orient_pos_threshold = float(orient_pos_threshold)
+        self.orient_lever_frac = float(orient_lever_frac)
+        self.orient_stage_distance_frac = float(orient_stage_distance_frac)
+        self.workspace_margin = float(workspace_margin)
         # Cap on per-step displacement in [-1,1] action units. Without
         # this, far targets produce `delta = (target - agent)/action_scale`
         # ≫ 1 and the clip saturates — std-PushT expert sits near
@@ -184,6 +228,7 @@ class MultiObjectGoalPolicy(BasePolicy):
         self._focus: list[str | None] = []
         self._focus_age: np.ndarray | None = None
         self._focus_side: list[int] = []  # which side to circumnavigate
+        self._focus_mode: list[str] = []  # 'STAGE' | 'PUSH', hysteresis-cached
         self._prev_action: list[np.ndarray | None] = []
 
     def set_seed(self, seed: int | None) -> None:
@@ -210,30 +255,61 @@ class MultiObjectGoalPolicy(BasePolicy):
             self._focus = [None] * n
             self._focus_age = np.zeros(n, dtype=np.int64)
             self._focus_side = [1] * n
+            self._focus_mode = ['STAGE'] * n
             self._prev_action = [None] * n
 
+    @staticmethod
+    def _signed_angle_diff(current: float, target: float) -> float:
+        """Shortest signed difference (target - current) wrapped to (-π, π].
+
+        Positive means the body needs CCW rotation to reach target.
+        """
+        d = (target - current + np.pi) % (2 * np.pi) - np.pi
+        return float(d)
+
     def _pick_focus(self, env, current: str | None) -> str | None:
-        """Pick the unsatisfied object farthest from its goal. Returns
-        None if every enabled object is already within tolerance.
+        """Pick the next focus object.
+
+        Strategy:
+          1. Build the set of *unsatisfied* objects (pos_err > pos_tol
+             OR ang_err > ang_tol).
+          2. If there's more than one unsatisfied obj and `current` is
+             in the set, rotate away from `current` — pick the highest-
+             scoring *other* unsatisfied obj. This prevents argmax from
+             always returning the same biggest-score obj indefinitely.
+          3. Otherwise pick the highest-scoring unsatisfied obj.
+
+        Score: `pos_err + 30·|ang_err|` (matches env / CEM joint cost).
+        Returns None if every enabled obj is within tolerance.
         """
         enabled = sorted(env.enabled)
         if not enabled:
             return None
-        dists: dict[str, float] = {}
+        unsatisfied: list[tuple[str, float]] = []
         for oid in enabled:
             body = env.bodies.get(oid)
             if body is None:
                 continue
             pos = np.array(body.position, dtype=np.float64)
-            goal = env.goal_pose[oid][:2]
-            dists[oid] = float(np.linalg.norm(pos - goal))
-        if not dists:
-            return None
-        unsatisfied = {o: d for o, d in dists.items() if d > self.switch_pos_tol}
-        if unsatisfied:
-            return max(unsatisfied, key=unsatisfied.get)
-        # All locally satisfied — keep current focus or pick any.
-        return current if current in dists else next(iter(dists))
+            goal = env.goal_pose[oid]
+            spec = env.specs[oid]
+            pos_err = float(np.linalg.norm(pos - goal[:2]))
+            if spec.has_orientation:
+                ang_err = abs(self._signed_angle_diff(
+                    float(body.angle), float(goal[2])
+                ))
+            else:
+                ang_err = 0.0
+            is_unsatisfied = (
+                pos_err > self.switch_pos_tol
+                or (spec.has_orientation and ang_err > self.switch_ang_tol)
+            )
+            if is_unsatisfied:
+                score = pos_err + 30.0 * ang_err
+                unsatisfied.append((oid, score))
+        if not unsatisfied:
+            return current if current in enabled else enabled[0]
+        return max(unsatisfied, key=lambda t: t[1])[0]
 
     def get_action(self, info_dict, **kwargs):
         assert hasattr(self, 'env'), 'Environment not set for the policy'
@@ -250,19 +326,30 @@ class MultiObjectGoalPolicy(BasePolicy):
                 or current not in env.enabled
                 or self._focus_age[i] >= self.switch_every
             )
-            # Also switch if current focus is already within tolerance.
+            # Also switch when current focus has reached BOTH position and
+            # angle tolerance (per the joint success criterion of the env).
             if not need_switch:
                 body = env.bodies.get(current)
                 if body is not None:
                     pos = np.array(body.position, dtype=np.float64)
-                    goal = env.goal_pose[current][:2]
-                    if np.linalg.norm(pos - goal) <= self.switch_pos_tol:
+                    goal = env.goal_pose[current]
+                    spec = env.specs[current]
+                    pos_ok = float(np.linalg.norm(pos - goal[:2])) <= self.switch_pos_tol
+                    if spec.has_orientation:
+                        ang_err = abs(self._signed_angle_diff(
+                            float(body.angle), float(goal[2])
+                        ))
+                        ang_ok = ang_err <= self.switch_ang_tol
+                    else:
+                        ang_ok = True
+                    if pos_ok and ang_ok:
                         need_switch = True
 
             if need_switch:
                 new_focus = self._pick_focus(env, current)
                 self._focus[i] = new_focus
                 self._focus_age[i] = 0
+                self._focus_mode[i] = 'STAGE'  # reset hysteresis on switch
                 # Commit to a circumnavigation side based on the current
                 # agent geometry. Without this commitment the side flips
                 # back and forth between steps and the agent oscillates.
@@ -289,48 +376,109 @@ class MultiObjectGoalPolicy(BasePolicy):
             else:
                 body = env.bodies[focus]
                 obj_pos = np.array(body.position, dtype=np.float64)
-                goal_pos = env.goal_pose[focus][:2]
-                push_dir = goal_pos - obj_pos
-                d_to_goal = float(np.linalg.norm(push_dir))
-                if d_to_goal < 1e-3:
-                    # Object is on the goal; small random nudge.
-                    push_dir = self.rng.normal(0, 1, 2)
-                    push_dir /= max(np.linalg.norm(push_dir), 1e-9)
-                else:
-                    push_dir = push_dir / d_to_goal
+                obj_angle = float(body.angle)
+                goal = env.goal_pose[focus]
+                goal_pos = goal[:2]
+                goal_angle = float(goal[2])
+                spec = env.specs[focus]
+                push_vec = goal_pos - obj_pos
+                d_to_goal = float(np.linalg.norm(push_vec))
 
-                # Two-phase controller:
-                #   PUSH  — agent is behind the obj relative to the goal;
-                #           aim past the obj so walking forward drives
-                #           it through to the goal.
-                #   STAGE — agent is in front of or beside the obj; aim
-                #           at the "behind" point plus a perpendicular
-                #           offset on the committed side. The offset
-                #           shrinks linearly with distance to behind, so
-                #           when the agent is far it walks around the
-                #           obj, and when it's near, it lines up on the
-                #           push axis.
-                agent_offset = agent_pos - obj_pos
-                along_push = float(np.dot(agent_offset, push_dir))
-                perp_dir = np.array([-push_dir[1], push_dir[0]])
-                behind_dist = self.push_distance
-                side = self._focus_side[i]
-                behind_pt = obj_pos - push_dir * behind_dist
+                # Geometry: stage outside the focus obj's bounding circle.
+                # The default `push_distance` is a configurable minimum but
+                # the *effective* staging distance must be ≥ obj radius +
+                # agent radius + small margin, or the agent target lands
+                # *inside* the obj's footprint and the agent gets stuck.
+                agent_r = 0.375 * float(env.variation_space['agent']['scale'].value)
+                clear_dist = spec.bounding_radius + agent_r + 10.0
+                behind_dist = max(self.push_distance, clear_dist)
 
-                if along_push < -0.5 * behind_dist:
-                    # PUSH target close to the obj, not far past it —
-                    # otherwise the agent teleports past the obj each
-                    # step and ends up on the goal-side, flipping back to
-                    # APPROACH. Keeping the target close means the agent
-                    # nudges the obj, then sits ~behind it for the next
-                    # push step.
-                    target = obj_pos + push_dir * 10.0
+                # Decide mode: ORIENT runs only for has-orientation objects
+                # whose position is already close but angle is still off.
+                if spec.has_orientation:
+                    signed_ang = self._signed_angle_diff(obj_angle, goal_angle)
                 else:
-                    d_to_behind = float(np.linalg.norm(behind_pt - agent_pos))
-                    # Lateral offset = behind_dist when far, 0 at behind.
-                    offset_factor = min(d_to_behind / (2 * behind_dist), 1.0)
-                    lat_off = perp_dir * side * behind_dist * offset_factor
-                    target = behind_pt + lat_off
+                    signed_ang = 0.0
+                use_orient = (
+                    spec.has_orientation
+                    and d_to_goal < self.orient_pos_threshold
+                    and abs(signed_ang) > self.switch_ang_tol
+                )
+
+                if use_orient:
+                    # ORIENT: agent stages just outside the obj's bounding
+                    # circle along `u` (perpendicular to obj→goal), then
+                    # walks tangentially in direction `F` (perpendicular
+                    # to `u`, sign chosen so r×F induces the desired
+                    # rotation). Walking through the contact slides along
+                    # the obj's edge, applying tangential force = torque.
+                    if d_to_goal < 1e-3:
+                        # Object on goal — pick a u aligned with the body
+                        # so the construction is well-defined.
+                        u = np.array([np.cos(obj_angle), np.sin(obj_angle)])
+                    else:
+                        push_dir = push_vec / d_to_goal
+                        u = np.array([-push_dir[1], push_dir[0]])
+                    sign = 1.0 if signed_ang > 0 else -1.0
+                    F = sign * np.array([-u[1], u[0]])
+                    stage = obj_pos + (spec.bounding_radius + agent_r + 5.0) * u
+                    # Tangential walk distance — small so the orient pass
+                    # doesn't blow past the angle goal.
+                    target = stage + F * 30.0
+                else:
+                    # STAGE/PUSH (translation control).
+                    if d_to_goal < 1e-3:
+                        push_dir = self.rng.normal(0, 1, 2)
+                        push_dir /= max(np.linalg.norm(push_dir), 1e-9)
+                    else:
+                        push_dir = push_vec / d_to_goal
+
+                    agent_offset = agent_pos - obj_pos
+                    along_push = float(np.dot(agent_offset, push_dir))
+                    perp_dir = np.array([-push_dir[1], push_dir[0]])
+                    side = self._focus_side[i]
+                    behind_pt = obj_pos - push_dir * behind_dist
+
+                    # Hysteresis between STAGE and PUSH to prevent
+                    # oscillation around the boundary. Enter PUSH when
+                    # well behind the obj (along_push ≤ −0.7·d); only
+                    # exit back to STAGE when the agent is in front
+                    # (along_push ≥ −0.3·d). The previous mode is
+                    # cached per-focus on the policy so the transition
+                    # is sticky across steps.
+                    prev_mode = self._focus_mode[i]
+                    if prev_mode == 'PUSH':
+                        in_push = along_push < -0.3 * behind_dist
+                    else:
+                        in_push = along_push < -0.7 * behind_dist
+                    self._focus_mode[i] = 'PUSH' if in_push else 'STAGE'
+
+                    if in_push:
+                        # PUSH target sits at a moderate distance *ahead*
+                        # of the obj along push_dir. Two competing
+                        # constraints:
+                        # - Far enough that the agent commits to a long
+                        #   walk through the obj (otherwise STAGE/PUSH
+                        #   oscillates after one push step).
+                        # - Not so far that the obj overshoots and exits
+                        #   the workspace. 1.5×behind_dist works well in
+                        #   practice; capped by d_to_goal so the final
+                        #   approach is gentle.
+                        push_ahead = min(1.5 * behind_dist, d_to_goal)
+                        target = obj_pos + push_dir * push_ahead
+                    else:
+                        d_to_behind = float(np.linalg.norm(behind_pt - agent_pos))
+                        offset_factor = min(d_to_behind / (2 * behind_dist), 1.0)
+                        lat_off = perp_dir * side * behind_dist * offset_factor
+                        target = behind_pt + lat_off
+
+            # Workspace bound: clip the agent target so the policy can't
+            # aim off-screen and drag objects out of view. Margin is set
+            # generously so the agent doesn't kiss the canvas edge.
+            ws = env.window_size
+            target = np.clip(
+                target, self.workspace_margin, ws - self.workspace_margin
+            )
 
             # Convert world-space target into the env's [-1, 1] action
             # (relative mode: action * action_scale = delta from current).

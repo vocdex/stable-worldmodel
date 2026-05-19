@@ -62,11 +62,16 @@ policy:
   p_wedge: 0.3
   # MultiObjectGoalPolicy params
   push_distance: 60
-  noise_std: 0.05               # std on the action, std-PushT used ~0.05
-  expert_switch_every: 40
+  noise_std: 0.03               # small action noise, std-PushT-ish
+  expert_switch_every: 80       # higher → less thrashing between objects
   switch_pos_tol: 18
   expert_max_step: 0.3          # cap on per-step displacement magnitude
-  expert_action_smoothing: 0.4  # EMA on action; 1.0 = none, 0.4 ≈ 2-step τ
+  # EMA smoothing on the executed action. The smoothness it buys is
+  # outweighed by the responsiveness it costs: when the policy commands
+  # a sharp direction change (e.g. at a focus switch or PUSH/STAGE
+  # transition), EMA blends the new and previous actions and cancels
+  # the intent. Disabled by default; max_step + small noise is enough.
+  expert_action_smoothing: 1.0
   # MultiObjectCEMPolicy params
   cem_horizon: 8
   cem_num_samples: 64

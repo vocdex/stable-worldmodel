@@ -251,7 +251,10 @@ def print_summary(stats: dict[str, dict]) -> None:
     for name, s in stats.items():
         c = s['pair_contact_count'].get(('A', 'C'), 0)
         ac_pct = c / s['sample_n'] * 100
-        expected_zero = name in ('AB', 'BC')
+        # Expected based on which identities were active during collection,
+        # not the dataset's filename — so `pusht_multi_AB_cem` etc. work too.
+        enabled = s['enabled']
+        expected_zero = not ({'A', 'C'} <= enabled)
         ok = (expected_zero and c == 0) or (not expected_zero and c > 0)
         rows.append([
             name,
@@ -261,6 +264,34 @@ def print_summary(stats: dict[str, dict]) -> None:
             '✅' if ok else '❌',
         ])
     print(_summary_table(rows, ['dataset', 'A↔C frames', 'pct', 'expected', 'ok']))
+
+    # ---- 9. Out-of-bounds detection ----
+    print('\n## 9. Out-of-bounds object positions (workspace = [0, 512])\n')
+    print('   Walls at 5–506. Object centers should stay roughly inside.')
+    print('   Significant excursions indicate physics tunneling or')
+    print('   high-impulse pushes the solver can\'t resolve.\n')
+    rows = []
+    for name, s in stats.items():
+        for oid in IDS:
+            if oid not in s['enabled']:
+                continue
+            poses = s['poses'][oid]
+            x_min, x_max = float(np.nanmin(poses[:, 0])), float(np.nanmax(poses[:, 0]))
+            y_min, y_max = float(np.nanmin(poses[:, 1])), float(np.nanmax(poses[:, 1]))
+            ws_lo, ws_hi = -10, 522  # small tolerance for objects touching walls
+            n_oob = int(np.sum(
+                (poses[:, 0] < ws_lo) | (poses[:, 0] > ws_hi) |
+                (poses[:, 1] < ws_lo) | (poses[:, 1] > ws_hi)
+            ))
+            severe = (x_min < -50) or (x_max > 560) or (y_min < -50) or (y_max > 560)
+            rows.append([
+                name, oid,
+                f'[{x_min:.0f}, {x_max:.0f}]',
+                f'[{y_min:.0f}, {y_max:.0f}]',
+                f'{n_oob}/{s["sample_n"]}',
+                '🚨' if severe else ('⚠' if n_oob else '✅'),
+            ])
+    print(_summary_table(rows, ['dataset', 'oid', 'x-range', 'y-range', 'oob-frames', 'flag']))
 
     # ---- 8. Pose coverage (workspace exploration) ----
     print('\n## 8. Per-object pose coverage (x range, y range, sampled finite)\n')
