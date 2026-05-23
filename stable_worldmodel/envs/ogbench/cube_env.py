@@ -994,11 +994,11 @@ class CubeEnv(ManipSpaceEnv):
         grid_texture.rgb2 = self.variation_space['floor']['color'].value[1]
 
         # Modify arm color
-        agent_color_changed = np.allclose(
+        agent_color_changed = not np.allclose(
             mjcf_model.find('material', 'ur5e/robotiq/black').rgba[:3],
             self.variation_space['agent']['color'].value,
         )
-        agent_color_changed = agent_color_changed or np.allclose(
+        agent_color_changed = agent_color_changed or not np.allclose(
             mjcf_model.find('material', 'ur5e/robotiq/pad_gray').rgba[:3],
             self.variation_space['agent']['color'].value,
         )

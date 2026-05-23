@@ -725,7 +725,9 @@ class PushT(gym.Env):
         color='LightSlateGray',
         mask=pymunk.ShapeFilter.ALL_MASKS(),
     ):
-        scale = 30
+        # NOTE: previously this had `scale = 30` here which silently overwrote
+        # the kwarg, making `block.scale` variations a complete no-op (pixel
+        # diff 0 between block.scale=20/60/default). Removed.
         mass = 1
         length = 4
         vertices1 = [
