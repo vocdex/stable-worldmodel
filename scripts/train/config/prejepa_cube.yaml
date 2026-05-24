@@ -1,0 +1,79 @@
+defaults:
+  - _self_
+  - launcher: local
+
+hydra:
+  job:
+    chdir: true
+
+# --- Run ---
+output_model_name: cube_${backbone.type}_actiononly_p${predictor.size}
+subdir: null
+seed: 42
+
+# --- Data ---
+# cube_single_expert.h5 is in ~/.stable_worldmodel/datasets/. 10k episodes,
+# mean episode length 201 env steps, pixels 224x224 uint8, action 5-D.
+# frameskip=5 matches scripts/train/config/data/ogb.yaml.
+dataset_name: cube_single_expert
+cache_dir: null
+n_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}
+frameskip: 5
+
+batch_size: 32
+num_workers: 16
+train_split: 0.9
+
+# --- Backbone (frozen pretrained encoder) ---
+backbone:
+  name: facebook/dinov2-small
+  type: dinov2_small
+  is_video_encoder: false
+
+image_size: 224
+patch_size: 14  # must match the encoder's patch size (14 for dinov2)
+
+# --- World model (action-only: no proprio token) ---
+# The cube dataset's proprio is split across many proprio_* columns and would
+# need keys_to_merge support in prejepa.py to use directly. Action-only is
+# plug-and-play here; add 'proprio: 10' to encoding once that merge support
+# is plumbed.
+wm:
+  history_size: 3
+  num_preds: 1
+  encoding:
+    action: 10   # per-step embedded dim; in_chans auto = action_dim(5) * frameskip(5) = 25
+
+predictor:
+  size: small
+  depth: 6
+  heads: 16
+  mlp_dim: 2048
+  dim_head: 64
+  dropout: 0.1
+  emb_dropout: 0.0
+
+# --- Optimizer ---
+optimizer:
+  type: AdamW
+  lr: 5e-4
+  weight_decay: 0.0
+
+# --- Trainer ---
+# Start with max_epochs: 10 as a sanity run (~5 h on a 4080).
+# DINO-WM paper trained to 100 epochs; bump this if you want to match.
+trainer:
+  max_epochs: 10
+  strategy: ddp
+  devices: auto
+  accelerator: gpu
+  precision: 16-mixed
+  gradient_clip_val: 1.0
+
+# --- Logging ---
+wandb:
+  enable: false
+  project: swm
+  entity: stable-worldmodel
+
+dump_object: true

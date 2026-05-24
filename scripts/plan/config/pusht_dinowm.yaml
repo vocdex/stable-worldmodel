@@ -21,7 +21,7 @@ seed: 42
 
 # Loader-side knobs read by the dispatch in scripts/plan/eval_wm.py.
 policy_kind: dino_wm_external
-policy: /home/nazirjon/Downloads/outputs/outputs/pusht
+policy: /home/nazirjon/Desktop/dino_wm/checkpoints/outputs/pusht
 dino_wm_src: /home/nazirjon/Desktop/dino_wm
 dino_wm_alpha: 1.0           # paper sweeps {0.1, 1.0}
 dino_wm_rollout_chunk: 64    # CEM batch chunk inside the adapter; lower → less VRAM, slower

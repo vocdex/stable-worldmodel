@@ -18,11 +18,29 @@ import stable_worldmodel as swm
 
 
 def img_transform(cfg):
+    # DINO-WM's training pipeline normalizes pixels to [-1, 1] via
+    # Normalize(mean=0.5, std=0.5) BEFORE feeding to the (frozen) DINOv2
+    # encoder. The predictor was therefore trained on the feature
+    # distribution DINOv2 produces from [-1, 1]-normalized inputs — not
+    # from ImageNet-stats inputs. Match that to avoid feature distribution
+    # shift at planning time. PreJEPA / SWM-native models trained with
+    # ImageNet stats should override via cfg.eval.normalize='imagenet'.
+    norm = cfg.eval.get('normalize', 'imagenet')
+    if cfg.get('policy_kind') == 'dino_wm_external':
+        norm = cfg.eval.get('normalize', 'half')
+
+    if norm == 'half':
+        normalize = transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    elif norm == 'imagenet':
+        normalize = transforms.Normalize(**spt.data.dataset_stats.ImageNet)
+    else:
+        raise ValueError(f'unknown normalize: {norm!r}')
+
     transform = transforms.Compose(
         [
             transforms.ToImage(),
             transforms.ToDtype(torch.float32, scale=True),
-            transforms.Normalize(**spt.data.dataset_stats.ImageNet),
+            normalize,
             transforms.Resize(size=cfg.eval.img_size),
         ]
     )

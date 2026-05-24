@@ -359,6 +359,11 @@ class DinoWMAdapter(nn.Module):
         BN = B * N
         chunk = max(1, self.rollout_chunk)
         cost_chunks = []
+        # bfloat16 autocast halves predictor compute on Ada; the ckpt was
+        # trained fp32 but inference-only fp16/bf16 typically drifts <0.1%
+        # on MSE objectives. Bypass with DINO_WM_FP32=1 env var.
+        import os as _os
+        use_amp = _os.environ.get('DINO_WM_FP32', '0') != '1'
         for s in range(0, BN, chunk):
             e = min(s + chunk, BN)
             v_chunk = v_emb_exp[s:e]
@@ -367,17 +372,24 @@ class DinoWMAdapter(nn.Module):
             proxy = torch.empty(
                 e - s, self.num_hist, 0, device=device, dtype=v_chunk.dtype
             )
-            z_obses, _ = self.vwm.rollout(
-                obs_0={'visual': proxy, 'proprio': p_chunk, 'features': v_chunk},
-                act=a_chunk,
-            )
-            z_pred_v = z_obses['visual'][:, -1:]
-            z_pred_p = z_obses['proprio'][:, -1:]
+            with torch.amp.autocast(
+                'cuda', dtype=torch.bfloat16, enabled=use_amp
+            ):
+                z_obses, _ = self.vwm.rollout(
+                    obs_0={
+                        'visual': proxy,
+                        'proprio': p_chunk,
+                        'features': v_chunk,
+                    },
+                    act=a_chunk,
+                )
+            z_pred_v = z_obses['visual'][:, -1:].float()
+            z_pred_p = z_obses['proprio'][:, -1:].float()
             visual_loss = F.mse_loss(
-                z_pred_v, z_goal_visual_full[s:e], reduction='none'
+                z_pred_v, z_goal_visual_full[s:e].float(), reduction='none'
             ).mean(dim=tuple(range(1, z_pred_v.ndim)))
             proprio_loss = F.mse_loss(
-                z_pred_p, z_goal_proprio_full[s:e], reduction='none'
+                z_pred_p, z_goal_proprio_full[s:e].float(), reduction='none'
             ).mean(dim=tuple(range(1, z_pred_p.ndim)))
             cost_chunks.append(visual_loss + self.alpha * proprio_loss)
 

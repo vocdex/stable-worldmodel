@@ -110,10 +110,15 @@ class CEMSolver:
 
         total_envs = self.n_envs
 
+        n_batches = (total_envs + self.batch_size - 1) // self.batch_size
+        progress_every = max(1, self.n_steps // 6)  # ~6 prints per CEM solve per batch
+
         # --- Iterate over batches ---
         for start_idx in range(0, total_envs, self.batch_size):
             end_idx = min(start_idx + self.batch_size, total_envs)
             current_bs = end_idx - start_idx
+            batch_idx = start_idx // self.batch_size
+            batch_t0 = time.time()
 
             # Slice Distribution Parameters for current batch
             batch_mean = mean[start_idx:end_idx]
@@ -183,6 +188,16 @@ class CEMSolver:
                 # Update final cost for logging
                 # We average the cost of the top elites
                 final_batch_cost = topk_vals.mean(dim=1).cpu().tolist()
+
+                if (step + 1) % progress_every == 0 or step == self.n_steps - 1:
+                    elapsed = time.time() - batch_t0
+                    print(
+                        f"  CEM batch {batch_idx + 1}/{n_batches} envs[{start_idx}:{end_idx}] "
+                        f"iter {step + 1}/{self.n_steps} "
+                        f"topk_cost={topk_vals.mean().item():.4f} "
+                        f"elapsed={elapsed:.0f}s",
+                        flush=True,
+                    )
 
             # Write results back to global storage
             mean[start_idx:end_idx] = batch_mean
