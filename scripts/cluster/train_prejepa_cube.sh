@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=3-00:00          # 4080 sanity: 74 samp/s @ bs=8. A100 bs=64 ~2-4h/epoch x 20 = up to 80h, budget 3d.
+#SBATCH --time=1-12:00          # 1.5d budget — expected ~10-20h on A100 40GB at bs=64
 #SBATCH --mem=200G
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_prejepa_cube_%j.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_prejepa_cube_%j.err
@@ -88,8 +88,9 @@ srun uv run python scripts/train/prejepa.py \
     dataset_name=cube_single_expert \
     cache_dir=$STABLEWM_HOME \
     trainer.max_epochs=20 \
+    +trainer.limit_val_batches=0 \
     batch_size=64 \
-    num_workers=8 \
+    num_workers=16 \
     wandb.enable=true \
     wandb.entity=vocdex \
     wandb.project=swm-cube
