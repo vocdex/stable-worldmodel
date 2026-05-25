@@ -89,7 +89,7 @@ srun uv run python scripts/train/prejepa.py \
     cache_dir=$STABLEWM_HOME \
     trainer.max_epochs=20 \
     +trainer.limit_val_batches=0 \
-    batch_size=64 \
+    batch_size=128 \
     num_workers=16 \
     wandb.enable=true \
     wandb.entity=vocdex \
