@@ -7,7 +7,7 @@ set -eo pipefail
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=2-00:00  # D-HH:MM
+#SBATCH --time=0-15:00  # D-HH:MM — ~10 h expected for 20 epochs on A100
 #SBATCH --mem=200G
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_prejepa_cube_%j.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_prejepa_cube_%j.err
@@ -71,12 +71,12 @@ cd "$WORK_BIND_DIR"
 srun uv run python scripts/train/prejepa.py \
     --config-name prejepa_cube \
     cache_dir=$STABLEWM_HOME \
-    trainer.max_epochs=100 \
+    trainer.max_epochs=20 \
     batch_size=64 \
     num_workers=8 \
     wandb.enable=true \
-    wandb.entity=stable-wm \
-    wandb.project=swm \
+    wandb.entity=vocdex \
+    wandb.project=swm-cube \
     2>&1
 
 conda deactivate
