@@ -146,14 +146,39 @@ fi
 
 # --- Run, capturing both per-cell log and SR ---
 CELL_LOG="$CELL_DIR/eval.log"
+GPU_LOG="$CELL_DIR/gpu.log"
 START_TIME=$(date +%s)
+
+# Background GPU sampler (every 15s: ts, mem_used_MiB, mem_total_MiB, util%)
+echo "ts,mem_used_mib,mem_total_mib,util_pct" > "$GPU_LOG"
+( while true; do
+      ts=$(date +%s)
+      line=$(nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu \
+             --format=csv,noheader,nounits | head -1 | tr -d ' ')
+      echo "${ts},${line}" >> "$GPU_LOG"
+      sleep 15
+  done ) &
+GPU_SAMPLER_PID=$!
+trap 'kill $GPU_SAMPLER_PID 2>/dev/null || true' EXIT
 
 echo "Launching eval_wm.py with overrides: ${HYDRA_OVERRIDES[*]}"
 srun uv run python scripts/plan/eval_wm.py "${HYDRA_OVERRIDES[@]}" 2>&1 | tee "$CELL_LOG"
 EXIT_CODE=${PIPESTATUS[0]}
 
+kill $GPU_SAMPLER_PID 2>/dev/null || true
+
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
+
+# --- GPU usage summary ---
+PEAK_MEM=$(awk -F, 'NR>1 && $2+0 > max {max=$2+0} END {print max+0}' "$GPU_LOG")
+MAX_UTIL=$(awk -F, 'NR>1 && $4+0 > max {max=$4+0} END {print max+0}' "$GPU_LOG")
+MEAN_UTIL=$(awk -F, 'NR>1 {s+=$4+0; n++} END {if(n>0) printf "%.1f", s/n; else print 0}' "$GPU_LOG")
+echo "GPU peak mem: ${PEAK_MEM} MiB   util max=${MAX_UTIL}%  mean=${MEAN_UTIL}%"
+# Heuristic: util mean <5% over a long run => process probably crashed
+if [ "$ELAPSED" -gt 120 ] && [ "${MEAN_UTIL%.*}" -lt 5 ] 2>/dev/null; then
+    echo "WARN: GPU mean util ${MEAN_UTIL}% over ${ELAPSED}s — process may have crashed early"
+fi
 
 if [ "$EXIT_CODE" -ne 0 ]; then
     echo "FAIL: eval_wm.py exit code $EXIT_CODE"
@@ -190,15 +215,17 @@ shopt -u nullglob
 (
     flock -x 200
     if [ ! -f "$CSV" ]; then
-        echo "label,factor,override,SR,elapsed_s,episode_successes" > "$CSV"
+        echo "label,factor,override,SR,elapsed_s,peak_mem_mib,mean_util_pct,episode_successes" > "$CSV"
     fi
     # Quote ep_successes in case of internal commas
-    printf '%s,%s,"%s",%s,%s,"%s"\n' \
+    printf '%s,%s,"%s",%s,%s,%s,%s,"%s"\n' \
         "$LABEL" \
         "${LABEL%%_*}" \
         "$OVERRIDE_VALUE" \
         "$SR" \
         "$ELAPSED" \
+        "$PEAK_MEM" \
+        "$MEAN_UTIL" \
         "$EP_SUCCESSES" >> "$CSV"
 ) 200>"$CSV.lock"
 
