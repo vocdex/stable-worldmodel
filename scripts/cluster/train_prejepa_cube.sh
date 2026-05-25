@@ -40,8 +40,24 @@ set -eo pipefail
 #   sbatch /mnt/lustre/work/martius/mot956/stable-worldmodel/scripts/cluster/train_prejepa_cube.sh
 # -----------------------------------------------------------------------------
 
+# Diagnostic header — so silent failures aren't silent.
+echo "=== ENVIRONMENT @ $(date) ==="
+echo "node=$(hostname)  user=$(whoami)  pwd=$(pwd)"
+echo "HOME=$HOME"
+echo "WORK=${WORK:-<UNSET>}"
+echo "============================="
+
+# Hardcode the lustre root in case $WORK isn't exported into this
+# non-interactive sbatch context.
+WORK=${WORK:-/mnt/lustre/work/martius/mot956}
+echo "Using WORK=$WORK"
+
 source ~/.bashrc
-conda activate $WORK/.conda/swm
+which conda || { echo "ERROR: conda not on PATH after 'source ~/.bashrc'" >&2; exit 1; }
+conda activate "$WORK/.conda/swm"
+which uv || { echo "ERROR: uv not on PATH after 'conda activate'" >&2; exit 1; }
+which python
+echo "conda env: ${CONDA_DEFAULT_ENV:-?}"
 
 # --- Caches (avoid filling $HOME quota) ---
 SHARED_CACHE=$WORK
