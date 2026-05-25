@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=0-15:00          # ~10 h expected for 20 epochs
+#SBATCH --time=3-00:00          # 4080 sanity: 74 samp/s @ bs=8. A100 bs=64 ~2-4h/epoch x 20 = up to 80h, budget 3d.
 #SBATCH --mem=200G
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_prejepa_cube_%j.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_prejepa_cube_%j.err

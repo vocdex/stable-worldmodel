@@ -365,10 +365,14 @@ def run(cfg):
         )
         logger.log_hyperparams(OmegaConf.to_container(cfg))
 
+    # NOTE: do NOT explicitly add CPUOffloadCallback — stable_pretraining
+    # auto-registers it (and other callbacks) via the
+    # 'stablepretraining_callbacks' entry point, which Lightning resolves
+    # at Trainer init. Adding it manually here triggers Lightning's
+    # "Found more than one stateful callback of type CPUOffloadCallback".
     trainer = pl.Trainer(
         **cfg.trainer,
         callbacks=[
-            spt.callbacks.CPUOffloadCallback(),
             SaveCkptCallback(
                 run_name=cfg.output_model_name,
                 cfg=cfg,
