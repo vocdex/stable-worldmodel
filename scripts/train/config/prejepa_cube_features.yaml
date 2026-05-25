@@ -1,0 +1,77 @@
+defaults:
+  - launcher: local
+  - _self_       # listed last so cube-specific values override launcher defaults
+
+hydra:
+  job:
+    chdir: true
+
+# --- Run ---
+output_model_name: cube_${backbone.type}_actiononly_cachedfeats_p${predictor.size}
+subdir: null
+seed: 42
+
+# --- Data (pre-extracted features) ---
+# Run scripts/extract/extract_dino_features_cube.py once first.
+# That writes cube_single_expert_features.h5 with one DINOv2-small feature
+# per frame at frameskip-aligned positions (5x reduction in #frames).
+# Sample windows are then num_steps=4 contiguous CACHED frames = 4 model
+# steps = 20 env steps, matching what the original pixel pipeline would
+# produce at frameskip=5 num_steps=4.
+dataset_name: cube_single_expert_features
+use_cached_features: true       # PreJEPA._encode_image is a passthrough when 4D inputs arrive
+cache_dir: null
+n_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}
+frameskip: 1                    # already pre-subsampled during extraction; don't subsample again
+
+batch_size: 256                 # tiny memory footprint without encoder forward
+num_workers: 16
+train_split: 0.9
+
+# --- Backbone (loaded for embed_dim/num_patches metadata only; not called) ---
+backbone:
+  name: facebook/dinov2-small
+  type: dinov2_small
+  is_video_encoder: false
+
+image_size: 224
+patch_size: 14
+
+# --- World model (action-only) ---
+wm:
+  history_size: 3
+  num_preds: 1
+  encoding:
+    action: 10                  # in_chans auto = action_dim(5) * frameskip(1, since cached) = 5
+
+predictor:
+  size: small
+  depth: 6
+  heads: 16
+  mlp_dim: 2048
+  dim_head: 64
+  dropout: 0.1
+  emb_dropout: 0.0
+
+# --- Optimizer ---
+optimizer:
+  type: AdamW
+  lr: 5e-4
+  weight_decay: 0.0
+
+# --- Trainer ---
+trainer:
+  max_epochs: 20
+  strategy: ddp
+  devices: auto
+  accelerator: gpu
+  precision: 16-mixed
+  gradient_clip_val: 1.0
+
+# --- Logging ---
+wandb:
+  enable: false
+  project: swm-cube
+  entity: vocdex
+
+dump_object: true
