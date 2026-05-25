@@ -76,7 +76,7 @@ export STABLEWM_HOME=$WORK_BIND_DIR
 
 EPOCH=${EPOCH:-15}
 NUM_EVAL=${NUM_EVAL:-50}
-BATCH_SIZE=${BATCH_SIZE:-3}   # bs=5 OOMs at num_eval=50 (50 EGL renderers ≈ 6 GiB env-side; previously only tested bs=5 at num_eval=10)
+BATCH_SIZE=${BATCH_SIZE:-4}   # bs=5 OOMs at num_eval=50 (50 EGL renderers ≈ 6 GiB env-side; previously only tested bs=5 at num_eval=10)
 NUM_SAMPLES=${NUM_SAMPLES:-300}
 N_STEPS=${N_STEPS:-30}
 TOPK=${TOPK:-30}
