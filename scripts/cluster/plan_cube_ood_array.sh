@@ -141,7 +141,7 @@ HYDRA_OVERRIDES=(
     solver.topk="$TOPK"
 )
 if [ "$OVERRIDE_VALUE" != "null" ]; then
-    HYDRA_OVERRIDES+=("eval.variation_overrides=${OVERRIDE_VALUE}")
+    HYDRA_OVERRIDES+=("+eval.variation_overrides=${OVERRIDE_VALUE}")
 fi
 
 # --- Run, capturing both per-cell log and SR ---
