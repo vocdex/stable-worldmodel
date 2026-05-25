@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=1-12:00          # 1.5d budget — expected ~10-20h on A100 40GB at bs=64
+#SBATCH --time=0-12:00          # 12h budget — cached features train ~5-8h on A100 40GB at bs=256
 #SBATCH --mem=200G
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_prejepa_cube_%j.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_prejepa_cube_%j.err
@@ -84,12 +84,12 @@ echo "torch check: $(uv run python -c 'import torch; print(torch.__version__, to
 echo ""
 
 srun uv run python scripts/train/prejepa.py \
-    --config-name prejepa_cube \
-    dataset_name=cube_single_expert \
+    --config-name prejepa_cube_features \
+    dataset_name=cube_single_expert_features \
     cache_dir=$STABLEWM_HOME \
     trainer.max_epochs=20 \
     +trainer.limit_val_batches=0 \
-    batch_size=128 \
+    batch_size=256 \
     num_workers=16 \
     wandb.enable=true \
     wandb.entity=vocdex \
