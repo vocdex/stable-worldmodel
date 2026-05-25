@@ -76,7 +76,7 @@ export STABLEWM_HOME=$WORK_BIND_DIR
 
 EPOCH=${EPOCH:-15}
 NUM_EVAL=${NUM_EVAL:-50}
-BATCH_SIZE=${BATCH_SIZE:-5}
+BATCH_SIZE=${BATCH_SIZE:-3}   # bs=5 OOMs on variation cells (extra MJCF/EGL state from re-rendered goals); baseline is fine at 5 but we share defaults
 NUM_SAMPLES=${NUM_SAMPLES:-300}
 N_STEPS=${N_STEPS:-30}
 TOPK=${TOPK:-30}
