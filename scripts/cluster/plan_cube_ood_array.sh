@@ -162,10 +162,23 @@ GPU_SAMPLER_PID=$!
 trap 'kill $GPU_SAMPLER_PID 2>/dev/null || true' EXIT
 
 echo "Launching eval_wm.py with overrides: ${HYDRA_OVERRIDES[*]}"
-srun uv run python scripts/plan/eval_wm.py "${HYDRA_OVERRIDES[@]}" 2>&1 | tee "$CELL_LOG"
+srun --kill-on-bad-exit=1 --unbuffered uv run python scripts/plan/eval_wm.py "${HYDRA_OVERRIDES[@]}" 2>&1 | tee "$CELL_LOG"
 EXIT_CODE=${PIPESTATUS[0]}
 
 kill $GPU_SAMPLER_PID 2>/dev/null || true
+wait $GPU_SAMPLER_PID 2>/dev/null || true
+
+# --- Reap GPU stragglers ---
+# PyTorch DataLoader workers + wandb threads + EGL contexts sometimes
+# outlive the parent process. Each task owns its own A100, so anything
+# in nvidia-smi here is ours and safe to kill.
+sleep 2
+LEFTOVER=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null \
+           | grep -v '^$' || true)
+if [ -n "$LEFTOVER" ]; then
+    echo "Killing GPU stragglers: $LEFTOVER"
+    echo "$LEFTOVER" | xargs -r kill -KILL 2>/dev/null || true
+fi
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))

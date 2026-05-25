@@ -83,7 +83,7 @@ uv sync --extra train --extra env
 echo "torch check: $(uv run python -c 'import torch; print(torch.__version__, torch.cuda.is_available())')"
 echo ""
 
-srun uv run python scripts/train/prejepa.py \
+srun --kill-on-bad-exit=1 --unbuffered uv run python scripts/train/prejepa.py \
     --config-name prejepa_cube_features \
     dataset_name=cube_single_expert_features \
     cache_dir=$STABLEWM_HOME \
@@ -96,6 +96,15 @@ srun uv run python scripts/train/prejepa.py \
     wandb.project=swm-cube
 
 EXIT_CODE=$?
+
+# Reap GPU stragglers (DataLoader workers + wandb threads sometimes hold the GPU)
+sleep 2
+LEFTOVER=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null \
+           | grep -v '^$' || true)
+if [ -n "$LEFTOVER" ]; then
+    echo "Killing GPU stragglers: $LEFTOVER"
+    echo "$LEFTOVER" | xargs -r kill -KILL 2>/dev/null || true
+fi
 echo ""
 echo "=================================================="
 echo "Exit: $EXIT_CODE  End: $(date)"
