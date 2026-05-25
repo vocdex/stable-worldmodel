@@ -35,12 +35,19 @@ from transformers import AutoModel
 from torchvision.transforms.functional import resize as tvf_resize
 
 
+def _default_datasets_dir() -> Path:
+    """Resolve via swm's cache utility so $STABLEWM_HOME wins over $HOME."""
+    from stable_worldmodel.data.utils import get_cache_dir
+    return get_cache_dir(sub_folder='datasets')
+
+
 def get_args():
     p = argparse.ArgumentParser()
+    datasets_dir = _default_datasets_dir()
     p.add_argument('--src', type=str,
-                   default=str(Path.home() / '.stable_worldmodel/datasets/cube_single_expert.h5'))
+                   default=str(datasets_dir / 'cube_single_expert.h5'))
     p.add_argument('--dst', type=str,
-                   default=str(Path.home() / '.stable_worldmodel/datasets/cube_single_expert_features.h5'))
+                   default=str(datasets_dir / 'cube_single_expert_features.h5'))
     p.add_argument('--frameskip', type=int, default=5)
     p.add_argument('--backbone', type=str, default='facebook/dinov2-small')
     p.add_argument('--image_size', type=int, default=224)
