@@ -73,8 +73,12 @@ cd "$WORK_BIND_DIR"
 # Sync project deps into .venv/ via uv. Idempotent — a no-op once synced,
 # fast otherwise. Without this, `uv run python` lazy-imports a few packages
 # then crashes when a transitive import (hydra, torch, etc.) isn't there.
-echo "uv sync ..."
-uv sync
+echo "uv sync (with train + env extras) ..."
+# hydra-core / transformers / wandb / stable-pretraining are in the `train`
+# optional-dep group (pyproject.toml [project.optional-dependencies]); env
+# deps (gymnasium[all], opencv, etc.) are in the `env` group. Plain `uv sync`
+# only installs base deps and crashes on `import hydra`.
+uv sync --extra train --extra env
 
 echo "torch check: $(uv run python -c 'import torch; print(torch.__version__, torch.cuda.is_available())')"
 echo ""
