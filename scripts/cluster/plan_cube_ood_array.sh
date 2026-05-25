@@ -97,9 +97,13 @@ fi
 rm -f "$CELL_DIR/failed.flag"
 
 # --- Env activation ---
+# /etc/bashrc on galvani references unbound vars (BASHRCSOURCED); temporarily
+# drop -u so sourcing it doesn't kill the task.
+set +u
 source ~/.bashrc
 CONDA_ENV_PATH="/mnt/lustre/work/martius/mot956/.conda/swm"
 conda activate "$CONDA_ENV_PATH" || { echo "FATAL: conda activate failed"; exit 3; }
+set -u
 
 echo "GPU: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader)"
 echo "Python: $(which python)"
