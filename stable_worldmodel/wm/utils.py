@@ -88,8 +88,93 @@ def load_pretrained(name: str, cache_dir: str = None, extra_args=None):
                 d = d.setdefault(part, {})
             d[parts[-1]] = value
 
-    model = instantiate(config)
+    # If the config has a _target_, use hydra to instantiate. Otherwise it's
+    # a training-cfg dump (e.g. prejepa save_pretrained writes the full
+    # training cfg, not a model-only Hydra spec) — try detecting known shapes
+    # and reconstructing manually.
+    if '_target_' in config:
+        model = instantiate(config)
+    elif {'predictor', 'wm', 'backbone'} <= set(config):
+        model = _build_prejepa_from_training_config(config)
+    else:
+        raise ValueError(
+            f"config has no _target_ and doesn't match known model schemas; "
+            f"top-level keys: {sorted(config.keys())}"
+        )
     model.load_state_dict(state_dict)
+    return model
+
+
+def _build_prejepa_from_training_config(cfg: dict) -> torch.nn.Module:
+    """Reconstruct a PreJEPA module from a training-cfg dump.
+
+    Mirrors the model assembly in scripts/train/prejepa.py:run() — frozen
+    backbone via EvalOnly, CausalPredictor, optional extra_encoders (action,
+    proprio, ...). Used when save_pretrained wrote the full training cfg
+    instead of a Hydra-instantiable model spec.
+    """
+    from collections import OrderedDict
+
+    import stable_pretraining as spt
+    import torch.nn as nn
+    from transformers import AutoModel, AutoModelForImageClassification
+
+    import stable_worldmodel as swm
+
+    # --- backbone ---
+    backbone_name = cfg['backbone']['name']
+    if backbone_name.startswith('microsoft/resnet-'):
+        backbone = AutoModelForImageClassification.from_pretrained(backbone_name)
+        embed_dim = backbone.config.hidden_sizes[-1]
+        backbone.classifier[1] = nn.LayerNorm(embed_dim)
+        num_patches = 1
+        interp_pos_enc = False
+    else:
+        backbone = AutoModel.from_pretrained(backbone_name)
+        if hasattr(backbone, 'vision_model'):
+            backbone = backbone.vision_model
+        embed_dim = backbone.config.hidden_size
+        num_patches = (cfg['image_size'] // cfg['patch_size']) ** 2
+        interp_pos_enc = True
+
+    # extra encodings widen the per-token embedding dim
+    extra_enc_cfg = cfg.get('wm', {}).get('encoding', {}) or {}
+    embed_dim_full = embed_dim + sum(extra_enc_cfg.values())
+
+    # --- predictor ---
+    predictor_kwargs = {
+        k: v for k, v in cfg['predictor'].items() if k != 'size'
+    }
+    predictor = swm.wm.prejepa.CausalPredictor(
+        num_patches=num_patches,
+        num_frames=cfg['wm']['history_size'],
+        dim=embed_dim_full,
+        **predictor_kwargs,
+    )
+
+    # --- extra encoders (action embedder, optionally proprio) ---
+    extra_dims = cfg.get('extra_dims', {}) or {}
+    extra_encoders = nn.ModuleDict(
+        OrderedDict(
+            (
+                key,
+                swm.wm.prejepa.Embedder(
+                    in_chans=extra_dims.get(key, emb_dim_default),
+                    emb_dim=emb_dim_default,
+                ),
+            )
+            for key, emb_dim_default in extra_enc_cfg.items()
+        )
+    )
+
+    model = swm.wm.prejepa.PreJEPA(
+        encoder=spt.backbone.EvalOnly(backbone),
+        predictor=predictor,
+        extra_encoders=extra_encoders,
+        history_size=cfg['wm']['history_size'],
+        num_pred=cfg['wm']['num_preds'],
+        interpolate_pos_encoding=interp_pos_enc,
+    )
     return model
 
 
