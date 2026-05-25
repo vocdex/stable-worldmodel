@@ -74,7 +74,7 @@ echo "Override: $OVERRIDE_VALUE"
 WORK_BIND_DIR=/mnt/lustre/work/martius/mot956/stable-worldmodel
 export STABLEWM_HOME=$WORK_BIND_DIR
 
-EPOCH=${EPOCH:-10}
+EPOCH=${EPOCH:-15}
 NUM_EVAL=${NUM_EVAL:-50}
 BATCH_SIZE=${BATCH_SIZE:-5}
 NUM_SAMPLES=${NUM_SAMPLES:-300}
