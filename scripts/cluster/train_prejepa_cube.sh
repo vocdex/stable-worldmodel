@@ -44,9 +44,8 @@ conda activate "$CONDA_ENV_PATH"
 
 echo "GPU:"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
-echo "Python: $(python --version)"
+echo "conda env: ${CONDA_DEFAULT_ENV:-?}  python=$(which python)"
 echo "uv: $(uv --version 2>/dev/null || echo not found)"
-echo "Torch CUDA: $(python -c 'import torch; print(torch.__version__, torch.cuda.is_available())')"
 echo ""
 
 # Caches (avoid $HOME quota)
@@ -70,6 +69,16 @@ if [ ! -e "$STABLEWM_HOME/datasets" ] && [ -d "$STABLEWM_HOME/dataset" ]; then
 fi
 
 cd "$WORK_BIND_DIR"
+
+# Sync project deps into .venv/ via uv. Idempotent — a no-op once synced,
+# fast otherwise. Without this, `uv run python` lazy-imports a few packages
+# then crashes when a transitive import (hydra, torch, etc.) isn't there.
+echo "uv sync ..."
+uv sync
+
+echo "torch check: $(uv run python -c 'import torch; print(torch.__version__, torch.cuda.is_available())')"
+echo ""
+
 srun uv run python scripts/train/prejepa.py \
     --config-name prejepa_cube \
     cache_dir=$STABLEWM_HOME \
