@@ -1,6 +1,6 @@
 defaults:
-  - _self_
   - launcher: local
+  - _self_       # listed last so our cube-specific values (dataset_name, etc.) override the launcher's pusht defaults
 
 hydra:
   job:

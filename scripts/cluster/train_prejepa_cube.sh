@@ -85,6 +85,7 @@ echo ""
 
 srun uv run python scripts/train/prejepa.py \
     --config-name prejepa_cube \
+    dataset_name=cube_single_expert \
     cache_dir=$STABLEWM_HOME \
     trainer.max_epochs=20 \
     batch_size=64 \
