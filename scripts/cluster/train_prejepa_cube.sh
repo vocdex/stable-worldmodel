@@ -1,6 +1,4 @@
 #!/bin/bash
-set -eo pipefail
-
 #SBATCH -J swm_prejepa_cube
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
@@ -11,6 +9,8 @@ set -eo pipefail
 #SBATCH --mem=200G
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_prejepa_cube_%j.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_prejepa_cube_%j.err
+
+set -eo pipefail
 
 # -----------------------------------------------------------------------------
 # Train PreJEPA / DINO-WM on OGbench-Cube (action-only, no proprio).
