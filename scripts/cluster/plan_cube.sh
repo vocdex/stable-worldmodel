@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=0-01:00          # 1h budget — full N=300 CEM on 50 episodes lands in ~25-45 min on A100
+#SBATCH --time=0-01:30          # 1.5h budget — full N=300 CEM on 50 episodes lands in ~40-60 min on A100 40GB at bs=5
 #SBATCH --mem=64G
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_plan_cube_%j.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_plan_cube_%j.err
@@ -47,6 +47,9 @@ export TRANSFORMERS_CACHE=$HF_HOME
 export TORCH_HOME=/mnt/lustre/work/martius/mot956/torch_hub
 export PYTHONUNBUFFERED=1
 export MUJOCO_GL=egl
+# Reduce fragmentation — the per-CEM-iter z-tensor (B*N x 9 x 256 x 394 fp32)
+# is large enough to trigger OOM on a fragmented 40 GiB pool without this.
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 mkdir -p "$WANDB_DIR" "$HF_HOME" "$TORCH_HOME"
 
 # Repo + dataset paths
@@ -68,7 +71,7 @@ echo ""
 # Knobs (override via env or hydra args)
 EPOCH=${EPOCH:-10}
 NUM_EVAL=${NUM_EVAL:-50}
-BATCH_SIZE=${BATCH_SIZE:-10}
+BATCH_SIZE=${BATCH_SIZE:-5}      # bs=10 OOMs at N=300 on A100 40GB; bs=5 fits with ~25 GiB peak
 NUM_SAMPLES=${NUM_SAMPLES:-300}
 N_STEPS=${N_STEPS:-30}
 TOPK=${TOPK:-30}
