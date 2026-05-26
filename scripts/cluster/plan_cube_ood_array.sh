@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --time=0-08:00          # per-task budget; 50-min baseline was at num_eval=10, scaling to num_eval=50 + bs=3 puts us ~7h worst-case
 #SBATCH --mem=64G
-#SBATCH --array=0-12            # 13 cells (cjepa cube_ood_cem300 matrix minus light dim/bright)
+#SBATCH --array=0-14            # 15 cells (full cjepa cube_ood_cem300 matrix)
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_cube_%A_%a.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_cube_%A_%a.err
 
@@ -17,6 +17,8 @@
 # Mirrors cjepa/experiments/cube_ood_cem300_train/run.sh cell list. Designed
 # for the realistic galvani cluster constraint of ~2 concurrent A100s →
 # expect ~26h total wall-clock (15 cells / 2 parallel × ~3.5h).
+#
+# Default EPOCH=10 (best performer on baseline sweep; was 20).
 #
 # Idempotency: each cell writes `${RESULTS_DIR}/cells/<label>/done.flag` on
 # success. Re-submitting the same array (e.g. after a crash) only runs the
@@ -57,6 +59,8 @@ CELLS=(
   "camera_yaw_p5|{variation:[camera.angle_delta],variation_values:{camera.angle_delta:[[5.0,0.0]]}}"
   "camera_yaw_m5|{variation:[camera.angle_delta],variation_values:{camera.angle_delta:[[-5.0,0.0]]}}"
   "camera_pitch_p5|{variation:[camera.angle_delta],variation_values:{camera.angle_delta:[[0.0,5.0]]}}"
+  "light_intensity_dim|{variation:[light.intensity],variation_values:{light.intensity:[0.3]}}"
+  "light_intensity_bright|{variation:[light.intensity],variation_values:{light.intensity:[0.95]}}"
 )
 
 if [ "$SLURM_ARRAY_TASK_ID" -ge "${#CELLS[@]}" ]; then
@@ -74,7 +78,7 @@ echo "Override: $OVERRIDE_VALUE"
 WORK_BIND_DIR=/mnt/lustre/work/martius/mot956/stable-worldmodel
 export STABLEWM_HOME=$WORK_BIND_DIR
 
-EPOCH=${EPOCH:-20}
+EPOCH=${EPOCH:-10}
 NUM_EVAL=${NUM_EVAL:-50}
 BATCH_SIZE=${BATCH_SIZE:-4}   # bs=5 OOMs at num_eval=50 (50 EGL renderers ≈ 6 GiB env-side; previously only tested bs=5 at num_eval=10)
 NUM_SAMPLES=${NUM_SAMPLES:-300}
