@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=0-08:00          # per-task budget; 50-min baseline was at num_eval=10, scaling to num_eval=50 + bs=3 puts us ~7h worst-case
+#SBATCH --time=0-03:30          # per-task budget; observed ~3h10m for 13-batch full run at num_eval=50, bs=4 — 20 min leeway
 #SBATCH --mem=64G
 #SBATCH --array=0-14            # 15 cells (full cjepa cube_ood_cem300 matrix)
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_cube_%A_%a.out
