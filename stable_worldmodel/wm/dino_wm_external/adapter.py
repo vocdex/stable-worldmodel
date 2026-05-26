@@ -79,6 +79,7 @@ def load_dino_wm_external(
     encoder_name: str | None = None,
     alpha: float = 1.0,
     rollout_chunk: int = 64,
+    dataset_h5: str | Path | None = None,
 ) -> 'DinoWMAdapter':
     """Load an original DINO-WM checkpoint and wrap it as a planner-compatible model.
 
@@ -174,11 +175,54 @@ def load_dino_wm_external(
         train_decoder=False,
     )
 
+    # --- Action / proprio normalization stats ---
+    # DINO-WM trains with normalize_action=true and normalize_proprio
+    # (datasets/pusht_dset.py:91-110). The CEM planner samples actions in env
+    # units; we must normalize them before feeding to the predictor (whose
+    # action_encoder was trained on standardized inputs). Same for proprio.
+    #
+    # Compute stats from the source h5 if provided; otherwise fall back to
+    # identity (no normalization), which matches behavior of older DINO-WM
+    # ckpts that didn't normalize.
+    normalize_action = hydra_cfg.get('normalize_action', False)
+    if normalize_action and dataset_h5 is not None:
+        import h5py
+        import numpy as np
+        with h5py.File(str(dataset_h5), 'r') as f:
+            act = f['action'][:].astype(np.float32)
+            prop = f['proprio'][:].astype(np.float32)
+        action_mean = torch.from_numpy(act.mean(0)).float()
+        action_std = torch.from_numpy(act.std(0).clip(min=1e-6)).float()
+        proprio_mean = torch.from_numpy(prop.mean(0)).float()
+        proprio_std = torch.from_numpy(prop.std(0).clip(min=1e-6)).float()
+        print(f'[DinoWMAdapter] action_mean={action_mean.tolist()} '
+              f'action_std={action_std.tolist()}')
+        print(f'[DinoWMAdapter] proprio_mean={proprio_mean.tolist()} '
+              f'proprio_std={proprio_std.tolist()}')
+    else:
+        if normalize_action:
+            print('[DinoWMAdapter] WARN: ckpt has normalize_action=true but '
+                  'no dataset_h5 was provided — using identity normalization '
+                  '(model will see OOD inputs). Pass dino_wm_dataset_h5 in '
+                  'the plan config to fix.')
+        # Identity stats: shape inferred from raw encoder in_chans.
+        # action_input_dim = frameskip * env_action_dim; we don't know the
+        # split, so use action_input_dim and assume frameskip=1 fallback.
+        env_action_dim_guess = action_input_dim
+        action_mean = torch.zeros(env_action_dim_guess)
+        action_std = torch.ones(env_action_dim_guess)
+        proprio_mean = torch.zeros(proprio_input_dim)
+        proprio_std = torch.ones(proprio_input_dim)
+
     return DinoWMAdapter(
         vwm=vwm,
         num_hist=num_hist,
         action_input_dim=action_input_dim,
         proprio_input_dim=proprio_input_dim,
+        action_mean=action_mean,
+        action_std=action_std,
+        proprio_mean=proprio_mean,
+        proprio_std=proprio_std,
         alpha=alpha,
         rollout_chunk=rollout_chunk,
     )
@@ -198,17 +242,29 @@ class DinoWMAdapter(nn.Module):
         num_hist: int,
         action_input_dim: int,
         proprio_input_dim: int,
+        action_mean: torch.Tensor,
+        action_std: torch.Tensor,
+        proprio_mean: torch.Tensor,
+        proprio_std: torch.Tensor,
         alpha: float = 1.0,
         rollout_chunk: int = 64,
     ) -> None:
         super().__init__()
         self.vwm = vwm
         self.num_hist = num_hist
-        # action_input_dim: the size CEM/the env supplies per step (= frameskip *
-        # env_action_dim for PushT). The action_encoder embeds it to emb_dim.
         self.action_input_dim = action_input_dim
         self.proprio_input_dim = proprio_input_dim
         self.alpha = alpha
+        # Normalization stats — registered as buffers so .to(device) carries
+        # them along with the model. action_mean/std are PER ENV-STEP
+        # (shape: (env_action_dim,)); frameskip-bundled candidates get
+        # reshaped, normalized per-step, then reshaped back.
+        self.register_buffer('action_mean', action_mean)
+        self.register_buffer('action_std', action_std)
+        self.register_buffer('proprio_mean', proprio_mean)
+        self.register_buffer('proprio_std', proprio_std)
+        self.env_action_dim = int(action_mean.numel())
+        self.frameskip = action_input_dim // self.env_action_dim
         # DINO-WM's predictor materializes a full (B*N, heads, T*P, T*P)
         # attention matrix per layer — at T=3, P=196 each row is 588 tokens, so
         # one float32 attention map is ~6.6 GB at N=300. Chunk the rollout
@@ -302,6 +358,17 @@ class DinoWMAdapter(nn.Module):
                 f'{self.action_input_dim}. Check plan_config.action_block matches '
                 'the DINO-WM frameskip.'
             )
+
+        # --- Normalize inputs to match DINO-WM training distribution ---
+        # CEM samples actions in env units; DINO-WM was trained on normalized
+        # actions (per-env-step), and proprio likewise. Without these, the
+        # model sees OOD inputs and planning collapses.
+        proprio = (proprio - self.proprio_mean) / self.proprio_std
+        goal_proprio = (goal_proprio - self.proprio_mean) / self.proprio_std
+        # candidates: (B, N, H, F*A_env) -> reshape, normalize per step, flatten
+        candidates = candidates.view(B, N, H, self.frameskip, self.env_action_dim)
+        candidates = (candidates - self.action_mean) / self.action_std
+        candidates = candidates.view(B, N, H, self.frameskip * self.env_action_dim)
 
         # Encode goal once per env (independent of N).
         z_goal = self.vwm.encode_obs({

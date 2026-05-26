@@ -126,6 +126,7 @@ def run(cfg: DictConfig):
                 ),
                 alpha=cfg.get('dino_wm_alpha', 1.0),
                 rollout_chunk=cfg.get('dino_wm_rollout_chunk', 64),
+                dataset_h5=cfg.get('dino_wm_dataset_h5', None),
             )
         else:
             model = swm.wm.utils.load_pretrained(cfg.policy)
