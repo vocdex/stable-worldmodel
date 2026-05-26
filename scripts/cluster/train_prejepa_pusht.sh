@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=1-12:00          # ~30 min extract + ~24h train (5x more frames than cube)
+#SBATCH --time=0-20:00          # ~30 min extract + ~18h train (10 epochs, 5x more frames than cube)
 #SBATCH --mem=200G
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_prejepa_pusht_%j.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_prejepa_pusht_%j.err
@@ -77,7 +77,7 @@ srun --kill-on-bad-exit=1 --unbuffered uv run python scripts/train/prejepa.py \
     --config-name prejepa_pusht_features \
     dataset_name=pusht_expert_train_features \
     cache_dir=$STABLEWM_HOME \
-    trainer.max_epochs=20 \
+    trainer.max_epochs=10 \
     +trainer.limit_val_batches=0 \
     batch_size=256 \
     num_workers=16 \
