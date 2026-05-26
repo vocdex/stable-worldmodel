@@ -80,9 +80,13 @@ BATCH_SIZE=${BATCH_SIZE:-4}   # bs=5 OOMs at num_eval=50 (50 EGL renderers ≈ 6
 NUM_SAMPLES=${NUM_SAMPLES:-300}
 N_STEPS=${N_STEPS:-30}
 TOPK=${TOPK:-30}
+SEED=${SEED:-42}
 POLICY="cube_dinov2_small_actiononly_cachedfeats_psmall/weights_epoch_${EPOCH}.pt"
 
-RESULTS_DIR=$WORK_BIND_DIR/checkpoints/cube_dinov2_small_actiononly_cachedfeats_psmall/ood_matrix_e${EPOCH}_n${NUM_SAMPLES}_eps${NUM_EVAL}
+# NOTE: seed is part of the results dir name so multi-seed runs don't collide.
+# The original seed=42 results live at the legacy path `ood_matrix_e20_n300_eps50`
+# (no _s suffix) — those are preserved; new runs go to suffixed dirs.
+RESULTS_DIR=$WORK_BIND_DIR/checkpoints/cube_dinov2_small_actiononly_cachedfeats_psmall/ood_matrix_e${EPOCH}_n${NUM_SAMPLES}_eps${NUM_EVAL}_s${SEED}
 CELL_DIR="$RESULTS_DIR/cells/$LABEL"
 CSV="$RESULTS_DIR/ood_matrix.csv"
 mkdir -p "$CELL_DIR"
@@ -139,6 +143,7 @@ HYDRA_OVERRIDES=(
     solver.num_samples="$NUM_SAMPLES"
     solver.n_steps="$N_STEPS"
     solver.topk="$TOPK"
+    seed="$SEED"
 )
 if [ "$OVERRIDE_VALUE" != "null" ]; then
     HYDRA_OVERRIDES+=("+eval.variation_overrides=${OVERRIDE_VALUE}")
