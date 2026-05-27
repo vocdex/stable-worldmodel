@@ -126,7 +126,6 @@ def run(cfg: DictConfig):
                 ),
                 alpha=cfg.get('dino_wm_alpha', 1.0),
                 rollout_chunk=cfg.get('dino_wm_rollout_chunk', 64),
-                dataset_h5=cfg.get('dino_wm_dataset_h5', None),
             )
         else:
             model = swm.wm.utils.load_pretrained(cfg.policy)
@@ -134,6 +133,31 @@ def run(cfg: DictConfig):
         model = model.eval()
         model.requires_grad_(False)
         model.interpolate_pos_encoding = True
+
+        # If the model carries DINO-WM training-time normalization constants
+        # (`dw_*_mean/std`, set by load_dino_wm_external), override the
+        # sklearn-fit StandardScalers so what's fed to the model AND what's
+        # denormalized into env-units exactly matches the training distribution.
+        # The sklearn fit on the full h5 gives stats that diverge from
+        # DINO-WM's hardcoded constants — most importantly, proprio dim-1
+        # mean is 298 (sklearn) vs 264 (DINO-WM), a 34-unit shift larger than
+        # the 20-unit success threshold.
+        if getattr(model, 'dw_action_mean', None) is not None:
+            if 'action' in process:
+                process['action'].mean_ = model.dw_action_mean
+                process['action'].scale_ = model.dw_action_std
+                process['action'].var_ = model.dw_action_std ** 2
+            if 'proprio' in process:
+                process['proprio'].mean_ = model.dw_proprio_mean
+                process['proprio'].scale_ = model.dw_proprio_std
+                process['proprio'].var_ = model.dw_proprio_std ** 2
+            if 'goal_proprio' in process:
+                process['goal_proprio'].mean_ = model.dw_proprio_mean
+                process['goal_proprio'].scale_ = model.dw_proprio_std
+                process['goal_proprio'].var_ = model.dw_proprio_std ** 2
+            print('[eval_wm] Overrode process[action/proprio/goal_proprio] '
+                  'with DINO-WM training-time stats from adapter.')
+
         config = swm.PlanConfig(**cfg.plan_config)
         solver = hydra.utils.instantiate(cfg.solver, model=model)
         policy = swm.policy.WorldModelPolicy(

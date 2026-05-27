@@ -25,10 +25,9 @@ policy: /home/nazirjon/Desktop/dino_wm/checkpoints/outputs/pusht
 dino_wm_src: /home/nazirjon/Desktop/dino_wm
 dino_wm_alpha: 1.0           # paper sweeps {0.1, 1.0}
 dino_wm_rollout_chunk: 64    # CEM batch chunk inside the adapter; lower → less VRAM, slower
-# Path to the h5 used to compute action/proprio normalization stats. Must be
-# the SAME dataset DINO-WM was trained on (pusht_noise == pusht_expert_train.h5).
-# Without this, model sees OOD inputs and SR collapses (~30% vs 92%).
-dino_wm_dataset_h5: ${oc.env:HOME}/.stable_worldmodel/datasets/pusht_expert_train.h5
+# NOTE: action/proprio normalization is handled by SWM's policy + CEM stack
+# (process[k].transform in _prepare_info; CEM samples in standardized space).
+# The adapter must NOT re-normalize — that was the prior 20-30% SR bug.
 
 plan_config:
   horizon: 5                # cjepa canonical
@@ -42,7 +41,17 @@ eval:
   eval_budget: 50
   img_size: 224
   dataset_name: pusht_expert_train
-  variation_overrides: null  # set via override, e.g. eval.variation_overrides='{variation: [block.color], variation_values: {block.color: [255,0,0]}}'
+  # DINO-WM h5 was generated with block scale hardcoded to 30 (see dino_wm
+  # env/pusht/pusht_env.py:779 — `scale=30` overrides the kwarg). SWM removed
+  # that override and now defaults to 40 from variation_space. The model only
+  # ever saw scale-30 imagery, so we must force scale=30 here, otherwise
+  # current obs (scale 40) and goal obs (h5, scale 30) look different to the
+  # model and SR collapses.
+  variation_overrides:
+    variation: [block.scale, goal.scale]
+    variation_values:
+      block.scale: 30
+      goal.scale: 30
   stop_on_success: false      # match cjepa: run full eval_budget regardless
   callables:
     - method: _set_state

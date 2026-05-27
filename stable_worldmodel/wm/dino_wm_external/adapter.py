@@ -79,7 +79,6 @@ def load_dino_wm_external(
     encoder_name: str | None = None,
     alpha: float = 1.0,
     rollout_chunk: int = 64,
-    dataset_h5: str | Path | None = None,
 ) -> 'DinoWMAdapter':
     """Load an original DINO-WM checkpoint and wrap it as a planner-compatible model.
 
@@ -175,56 +174,36 @@ def load_dino_wm_external(
         train_decoder=False,
     )
 
-    # --- Action / proprio normalization stats ---
-    # DINO-WM trains with normalize_action=true and normalize_proprio
-    # (datasets/pusht_dset.py:91-110). The CEM planner samples actions in env
-    # units; we must normalize them before feeding to the predictor (whose
-    # action_encoder was trained on standardized inputs). Same for proprio.
+    # NOTE on normalization: SWM's `WorldModelPolicy._prepare_info` standardizes
+    # `proprio`/`goal_proprio` via fitted StandardScalers (policy.py:121-181),
+    # and `CEMSolver` samples `candidates` in standardized space (cem.py:147-157).
+    # DINO-WM's predictor was trained on standardized inputs using the dataset
+    # constants below. SWM's sklearn-fit StandardScalers compute slightly
+    # different stats (e.g. PROPRIO mean[1] is 298 vs DINO-WM's 264 — a
+    # 34-unit shift, larger than the 20-unit success threshold). Pass the
+    # DINO-WM training-time constants through so eval_wm can override the
+    # SWM-fitted scalers with these, matching what the model was trained on.
     #
-    # Compute stats from the source h5 if provided; otherwise fall back to
-    # identity (no normalization), which matches behavior of older DINO-WM
-    # ckpts that didn't normalize.
-    normalize_action = hydra_cfg.get('normalize_action', False)
-    if normalize_action and dataset_h5 is not None:
-        import h5py
-        import numpy as np
-        with h5py.File(str(dataset_h5), 'r') as f:
-            act = f['action'][:].astype(np.float32)
-            prop = f['proprio'][:].astype(np.float32)
-        action_mean = torch.from_numpy(act.mean(0)).float()
-        action_std = torch.from_numpy(act.std(0).clip(min=1e-6)).float()
-        proprio_mean = torch.from_numpy(prop.mean(0)).float()
-        proprio_std = torch.from_numpy(prop.std(0).clip(min=1e-6)).float()
-        print(f'[DinoWMAdapter] action_mean={action_mean.tolist()} '
-              f'action_std={action_std.tolist()}')
-        print(f'[DinoWMAdapter] proprio_mean={proprio_mean.tolist()} '
-              f'proprio_std={proprio_std.tolist()}')
-    else:
-        if normalize_action:
-            print('[DinoWMAdapter] WARN: ckpt has normalize_action=true but '
-                  'no dataset_h5 was provided — using identity normalization '
-                  '(model will see OOD inputs). Pass dino_wm_dataset_h5 in '
-                  'the plan config to fix.')
-        # Identity stats: shape inferred from raw encoder in_chans.
-        # action_input_dim = frameskip * env_action_dim; we don't know the
-        # split, so use action_input_dim and assume frameskip=1 fallback.
-        env_action_dim_guess = action_input_dim
-        action_mean = torch.zeros(env_action_dim_guess)
-        action_std = torch.ones(env_action_dim_guess)
-        proprio_mean = torch.zeros(proprio_input_dim)
-        proprio_std = torch.ones(proprio_input_dim)
+    # Source: dino_wm/datasets/pusht_dset.py (ACTION_MEAN/STD, PROPRIO_MEAN/STD).
+    # Hardcoded here because importing the dino_wm `datasets` module would
+    # collide with the HuggingFace `datasets` package on sys.path.
+    import numpy as _np
+    dw_action_mean = _np.array([-0.0087, 0.0068], dtype=_np.float64)
+    dw_action_std = _np.array([0.2019, 0.2002], dtype=_np.float64)
+    dw_proprio_mean = _np.array([236.6155, 264.5674, -2.9303, 2.5431], dtype=_np.float64)
+    dw_proprio_std = _np.array([101.1202, 87.0112, 74.8456, 74.1401], dtype=_np.float64)
 
     return DinoWMAdapter(
         vwm=vwm,
         num_hist=num_hist,
         action_input_dim=action_input_dim,
         proprio_input_dim=proprio_input_dim,
-        action_mean=action_mean,
-        action_std=action_std,
-        proprio_mean=proprio_mean,
-        proprio_std=proprio_std,
         alpha=alpha,
         rollout_chunk=rollout_chunk,
+        dw_action_mean=dw_action_mean,
+        dw_action_std=dw_action_std,
+        dw_proprio_mean=dw_proprio_mean,
+        dw_proprio_std=dw_proprio_std,
     )
 
 
@@ -242,12 +221,12 @@ class DinoWMAdapter(nn.Module):
         num_hist: int,
         action_input_dim: int,
         proprio_input_dim: int,
-        action_mean: torch.Tensor,
-        action_std: torch.Tensor,
-        proprio_mean: torch.Tensor,
-        proprio_std: torch.Tensor,
         alpha: float = 1.0,
         rollout_chunk: int = 64,
+        dw_action_mean=None,
+        dw_action_std=None,
+        dw_proprio_mean=None,
+        dw_proprio_std=None,
     ) -> None:
         super().__init__()
         self.vwm = vwm
@@ -255,16 +234,6 @@ class DinoWMAdapter(nn.Module):
         self.action_input_dim = action_input_dim
         self.proprio_input_dim = proprio_input_dim
         self.alpha = alpha
-        # Normalization stats — registered as buffers so .to(device) carries
-        # them along with the model. action_mean/std are PER ENV-STEP
-        # (shape: (env_action_dim,)); frameskip-bundled candidates get
-        # reshaped, normalized per-step, then reshaped back.
-        self.register_buffer('action_mean', action_mean)
-        self.register_buffer('action_std', action_std)
-        self.register_buffer('proprio_mean', proprio_mean)
-        self.register_buffer('proprio_std', proprio_std)
-        self.env_action_dim = int(action_mean.numel())
-        self.frameskip = action_input_dim // self.env_action_dim
         # DINO-WM's predictor materializes a full (B*N, heads, T*P, T*P)
         # attention matrix per layer — at T=3, P=196 each row is 588 tokens, so
         # one float32 attention map is ~6.6 GB at N=300. Chunk the rollout
@@ -274,6 +243,13 @@ class DinoWMAdapter(nn.Module):
         # resizes the image before encoding rather than interpolating positional
         # embeddings.
         self.interpolate_pos_encoding = False
+        # DINO-WM training-time normalization constants (numpy arrays). Used by
+        # eval_wm to override SWM's sklearn-fit StandardScalers — see
+        # load_dino_wm_external docstring.
+        self.dw_action_mean = dw_action_mean
+        self.dw_action_std = dw_action_std
+        self.dw_proprio_mean = dw_proprio_mean
+        self.dw_proprio_std = dw_proprio_std
 
     @property
     def device(self) -> torch.device:
@@ -339,36 +315,12 @@ class DinoWMAdapter(nn.Module):
         goal = _strip(info_dict['goal']).to(device)[:, -1:]
         goal_proprio = _strip(info_dict['goal_proprio']).to(device)[:, -1:]
 
-        # If world.history_size < ckpt num_hist (e.g. history_size=1 against a
-        # num_hist=3 ckpt), pad-repeat the last available frame. The predictor
-        # was trained on a fixed 3-frame window (pos_embedding sized for
-        # num_hist*num_patches tokens) and would error otherwise.
-        T_avail = pixels.shape[1]
-        if T_avail < self.num_hist:
-            pad = self.num_hist - T_avail
-            pixels = torch.cat(
-                [pixels[:, :1].expand(-1, pad, -1, -1, -1), pixels], dim=1
-            )
-            proprio = torch.cat(
-                [proprio[:, :1].expand(-1, pad, -1), proprio], dim=1
-            )
         if A != self.action_input_dim:
             raise ValueError(
                 f'action_candidates last dim {A} != ckpt action_encoder.in_chans '
                 f'{self.action_input_dim}. Check plan_config.action_block matches '
                 'the DINO-WM frameskip.'
             )
-
-        # --- Normalize inputs to match DINO-WM training distribution ---
-        # CEM samples actions in env units; DINO-WM was trained on normalized
-        # actions (per-env-step), and proprio likewise. Without these, the
-        # model sees OOD inputs and planning collapses.
-        proprio = (proprio - self.proprio_mean) / self.proprio_std
-        goal_proprio = (goal_proprio - self.proprio_mean) / self.proprio_std
-        # candidates: (B, N, H, F*A_env) -> reshape, normalize per step, flatten
-        candidates = candidates.view(B, N, H, self.frameskip, self.env_action_dim)
-        candidates = (candidates - self.action_mean) / self.action_std
-        candidates = candidates.view(B, N, H, self.frameskip * self.env_action_dim)
 
         # Encode goal once per env (independent of N).
         z_goal = self.vwm.encode_obs({
@@ -378,46 +330,41 @@ class DinoWMAdapter(nn.Module):
         # z_goal['visual']:  (B, 1, P, D_visual)
         # z_goal['proprio']: (B, 1, proprio_emb_dim)
 
-        # Take trailing num_hist frames as planning history.
-        pixels_h = pixels[:, -self.num_hist:].float()
-        proprio_h = proprio[:, -self.num_hist:].float()
+        # Match native dino_wm/planning/cem.py: feed only 1 init frame (the
+        # most recent obs) regardless of ckpt num_hist, and let the candidate
+        # action sequence drive the rollout. The first candidate is consumed
+        # by `encode(obs_0, act_0)` (paired with the init frame) and the
+        # remaining H-1 candidates drive the loop; an extra final predict adds
+        # one more frame so the LAST predicted frame is at H model-steps after
+        # the init = H * action_block env-steps == goal_offset_steps.
+        # Padding to num_hist with frame-repeat (as a prior version did) both
+        # fed the model an OOD identical-history window AND misaligned the
+        # horizon — the last predicted frame ended up at (num_hist - 1 + H)
+        # model-steps after the real init, overshooting the goal by
+        # (num_hist - 1) * action_block env-steps (5 env-steps on PushT).
+        pixels_init = pixels[:, -1:].float()    # (B, 1, 3, H, W)
+        proprio_init = proprio[:, -1:].float()  # (B, 1, proprio_dim)
 
-        # CRITICAL PERF/MEMORY: encode the visual history ONCE per env (B *
-        # num_hist forward passes through DINO), then expand the resulting
-        # latent across N samples. Without this, vwm.rollout would re-encode
-        # B * N * num_hist frames per CEM iteration — for N=300 that's a 300x
-        # blow-up, and DINOv2 activations OOM on 16GB cards. Pass the result
-        # via the `features` key, which encode_obs uses to skip the encoder
-        # (visual_world_model.py:125-127).
+        # CRITICAL PERF/MEMORY: encode the init visual ONCE per env (B
+        # forward passes through DINO), then expand the resulting latent
+        # across N samples. Without this, vwm.rollout would re-encode B*N
+        # frames per CEM iteration — for N=300 that's a 300x blow-up.
+        # Pass the result via the `features` key, which encode_obs uses to
+        # skip the encoder (visual_world_model.py:125-127).
         v_in = self.vwm.encoder_transform(
-            rearrange(pixels_h, 'b t c h w -> (b t) c h w')
+            rearrange(pixels_init, 'b t c h w -> (b t) c h w')
         )
         v_emb_b = self.vwm.encoder.forward(v_in)
-        v_emb_b = rearrange(v_emb_b, '(b t) p d -> b t p d', b=B)
+        v_emb_b = rearrange(v_emb_b, '(b t) p d -> b t p d', b=B)  # (B, 1, P, D)
 
-        # Expand history latents and proprio across N candidates.
-        v_emb_exp = v_emb_b.repeat_interleave(N, dim=0)        # (B*N, num_hist, P, D)
-        proprio_h_exp = proprio_h.repeat_interleave(N, dim=0)  # (B*N, num_hist, proprio_dim)
-        # `visual` key is read-only when `features` is present, but rollout's
-        # signature still touches `obs_0['visual'].shape[1]` for num_obs_init.
-        # Provide a tiny placeholder of the right shape (no allocation cost
-        # since num_hist is small).
-        pixels_shape_proxy = torch.empty(
-            B * N, self.num_hist, 0, device=device, dtype=v_emb_exp.dtype
-        )
+        # Expand init latents and proprio across N candidates.
+        v_emb_exp = v_emb_b.repeat_interleave(N, dim=0)        # (B*N, 1, P, D)
+        proprio_init_exp = proprio_init.repeat_interleave(N, dim=0)  # (B*N, 1, p)
 
-        # Build the act sequence VWorldModel.rollout expects:
-        #   act of shape (B*N, num_hist + H, action_dim).
-        # The first num_hist slots are the actions taken WITHIN the history window
-        # — unknown during MPC, so we use zeros (a standard approximation; matches
-        # what the original DINO-WM planner does for the initial slots). The
-        # remaining H slots are the candidate horizon actions.
-        candidates_flat = candidates.reshape(B * N, H, A)
-        zero_past = torch.zeros(
-            B * N, self.num_hist, A,
-            device=device, dtype=candidates_flat.dtype,
-        )
-        act_full = torch.cat([zero_past, candidates_flat], dim=1)
+        # Pass candidates directly as the action sequence; native rollout
+        # slices act_0 = act[:, :num_obs_init=1] (consumed by encode) and
+        # action = act[:, 1:] (drives the H-1 predict loop iterations).
+        act_full = candidates.reshape(B * N, H, A)
 
         # Expand goal across N once, then slice per chunk.
         z_goal_visual_full = z_goal['visual'].repeat_interleave(N, dim=0)
@@ -434,10 +381,14 @@ class DinoWMAdapter(nn.Module):
         for s in range(0, BN, chunk):
             e = min(s + chunk, BN)
             v_chunk = v_emb_exp[s:e]
-            p_chunk = proprio_h_exp[s:e]
+            p_chunk = proprio_init_exp[s:e]
             a_chunk = act_full[s:e]
+            # `visual` is read-only when `features` is present, but rollout
+            # still touches `obs_0['visual'].shape[1]` for num_obs_init. A
+            # 1-step, zero-channel proxy is the minimum shape that yields
+            # num_obs_init = 1 (matching native dino_wm planner).
             proxy = torch.empty(
-                e - s, self.num_hist, 0, device=device, dtype=v_chunk.dtype
+                e - s, 1, 0, device=device, dtype=v_chunk.dtype
             )
             with torch.amp.autocast(
                 'cuda', dtype=torch.bfloat16, enabled=use_amp
