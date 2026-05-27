@@ -8,6 +8,8 @@
 # 30-min budget: just verify the integration loads and runs to first SR.
 # Bump knobs via env vars if you want more (NUM_EVAL=10 BATCH_SIZE=2 etc).
 
+set +u
+source ~/.bashrc
 set -u
 
 WORK_BIND_DIR=/mnt/lustre/work/martius/mot956/stable-worldmodel
