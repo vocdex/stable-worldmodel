@@ -994,6 +994,20 @@ class World:
             )
 
         target_frames = torch.stack([ep['pixels'] for ep in data]).numpy()
+        # When a variation override is active, the H5 target trajectory frames
+        # are the un-perturbed ground truth and would confuse a visual sanity
+        # check (only the rollout panel shows the variation). Swap the *last*
+        # target frame (which is what the right-side "goal" column displays)
+        # for the env-rendered goal under the active variation. The middle
+        # target frames are kept as-is — they're the dataset reference path.
+        if variation_overrides is not None:
+            try:
+                rendered_goals = np.stack([
+                    env.unwrapped._goal for env in self.envs.unwrapped.envs
+                ])
+                target_frames[:, -1] = rendered_goals
+            except (AttributeError, ValueError):
+                pass  # env doesn't expose _goal — leave H5 frames as-is
         video_frames = np.empty(
             (self.num_envs, eval_budget, *self.infos['pixels'].shape[-3:]),
             dtype=np.uint8,
