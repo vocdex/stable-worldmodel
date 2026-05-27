@@ -125,6 +125,9 @@ cd "$WORK_BIND_DIR"
 
 echo "uv sync ..."
 uv sync --extra train --extra env || { echo "FATAL: uv sync failed"; touch "$CELL_DIR/failed.flag"; exit 4; }
+# DINO-WM ckpt pickle references `accelerate` (training-time wrapper);
+# install after sync so torch.load can resolve the module path.
+uv pip install accelerate || { echo "FATAL: accelerate install failed"; touch "$CELL_DIR/failed.flag"; exit 5; }
 
 HYDRA_OVERRIDES=(
     --config-name pusht_dinowm
