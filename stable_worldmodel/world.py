@@ -958,6 +958,18 @@ class World:
             ])
             goal_step['goal'] = rerendered
 
+        # SAME issue for the initial observation: init_step['pixels'] is the
+        # H5 frame (no variation), but the env has been reset under variation.
+        # Without this, frame 0 of the rollout is undistorted while frame 1+
+        # are variation-applied — so CEM's first-step planning observation
+        # never reflects the perturbation, inflating SR on visual variations
+        # that don't change physics (e.g. color).
+        if variation_overrides is not None and 'pixels' in init_step:
+            rerendered_init = np.stack([
+                env.unwrapped.render() for env in self.envs.unwrapped.envs
+            ])
+            init_step['pixels'] = rerendered_init
+
         # TODO get the data from the previous step in the dataset for history
         init_step = {
             k: np.broadcast_to(v[:, None, ...], shape_prefix + v.shape[1:])
