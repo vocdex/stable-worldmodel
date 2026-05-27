@@ -231,6 +231,12 @@ def run(cfg: DictConfig):
                     space = space[part]
                 vv[k] = np.array(v, dtype=space.dtype)
 
+    # Allow per-cell video paths via cfg.output.video_path; default to the
+    # ckpt-parent dir (legacy behavior). Useful for OOD arrays where parallel
+    # cells would otherwise race on the same rollout_*.mp4 filenames.
+    video_path = Path(cfg.output.get('video_path', results_path))
+    video_path.mkdir(parents=True, exist_ok=True)
+
     start_time = time.time()
     metrics = world.evaluate_from_dataset(
         dataset,
@@ -241,7 +247,7 @@ def run(cfg: DictConfig):
         callables=OmegaConf.to_container(
             cfg.eval.get('callables'), resolve=True
         ),
-        video_path=results_path,
+        video_path=video_path,
         variation_overrides=variation_overrides,
         stop_on_success=cfg.eval.get('stop_on_success', False),
     )
