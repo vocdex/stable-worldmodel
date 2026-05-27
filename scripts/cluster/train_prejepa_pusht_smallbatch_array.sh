@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=0-12:00
+#SBATCH --time=0-14:00          # bs=256 measured at 4.5h; bs=32 expected ~7-9h + leeway
 #SBATCH --mem=200G
 #SBATCH --array=0-1
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_pusht_actiondiag_%A_%a.out
