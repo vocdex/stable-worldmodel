@@ -958,18 +958,6 @@ class World:
             ])
             goal_step['goal'] = rerendered
 
-        # SAME issue for the initial observation: init_step['pixels'] is the
-        # H5 frame (no variation), but the env has been reset under variation.
-        # Without this, frame 0 of the rollout is undistorted while frame 1+
-        # are variation-applied — so CEM's first-step planning observation
-        # never reflects the perturbation, inflating SR on visual variations
-        # that don't change physics (e.g. color).
-        if variation_overrides is not None and 'pixels' in init_step:
-            rerendered_init = np.stack([
-                env.unwrapped.render() for env in self.envs.unwrapped.envs
-            ])
-            init_step['pixels'] = rerendered_init
-
         # TODO get the data from the previous step in the dataset for history
         init_step = {
             k: np.broadcast_to(v[:, None, ...], shape_prefix + v.shape[1:])
@@ -994,20 +982,6 @@ class World:
             )
 
         target_frames = torch.stack([ep['pixels'] for ep in data]).numpy()
-        # When a variation override is active, the H5 target trajectory frames
-        # are the un-perturbed ground truth and would confuse a visual sanity
-        # check (only the rollout panel shows the variation). Swap the *last*
-        # target frame (which is what the right-side "goal" column displays)
-        # for the env-rendered goal under the active variation. The middle
-        # target frames are kept as-is — they're the dataset reference path.
-        if variation_overrides is not None:
-            try:
-                rendered_goals = np.stack([
-                    env.unwrapped._goal for env in self.envs.unwrapped.envs
-                ])
-                target_frames[:, -1] = rendered_goals
-            except (AttributeError, ValueError):
-                pass  # env doesn't expose _goal — leave H5 frames as-is
         video_frames = np.empty(
             (self.num_envs, eval_budget, *self.infos['pixels'].shape[-3:]),
             dtype=np.uint8,
