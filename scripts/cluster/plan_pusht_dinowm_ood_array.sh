@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=0-01:30
+#SBATCH --time=0-01:00          # measured: 50 eps ~= 38 min (2x 16-min MPC iters); 60 min has comfortable margin
 #SBATCH --mem=64G
 #SBATCH --array=0-21             # 22 cells (cjepa pusht_robustness_lewm matrix)
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_pusht_dwm_%A_%a.out

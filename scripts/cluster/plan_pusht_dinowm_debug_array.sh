@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=0-00:45
+#SBATCH --time=0-00:20          # measured: 10 eps ~= 12 min (2x 3.5-min MPC iters); 20 min has margin
 #SBATCH --mem=64G
 #SBATCH --array=0-5
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_dwm_debug_%A_%a.out
