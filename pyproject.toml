@@ -38,6 +38,7 @@ train = [
     "hydra-core",
     "hydra-submitit-launcher",
     "wandb",
+    "accelerate",   # needed to unpickle the released DINO-WM ckpt (its modules transitively reference accelerate)
 ]
 
 env = [
