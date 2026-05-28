@@ -5,20 +5,18 @@
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=0-00:20          # measured: 10 eps ~= 12 min (2x 3.5-min MPC iters); 20 min has margin
+#SBATCH --time=0-01:00          # measured: 50 eps ~= 38 min (2x 16-min MPC iters); 60 min has margin
 #SBATCH --mem=64G
-#SBATCH --array=0-5
+#SBATCH --array=0-1              # 2 cells x 1 alpha
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_dwm_debug_%A_%a.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_dwm_debug_%A_%a.err
 
 # -----------------------------------------------------------------------------
-# Debug array: 3 cells x 2 alpha values (proprio weight).
+# Debug array: 2 cells x 1 alpha value (proprio weight), 50 eval episodes.
 # Saves rollout videos to per-cell dirs so we can VISUALLY confirm:
 #   (a) variations are actually rendered
 #   (b) the model genuinely succeeds vs lucks into it
 #   (c) the role of proprio (alpha=0 disables proprio MSE in cost)
-#
-# Uses small num_eval=10 so videos finish fast and stay small.
 # -----------------------------------------------------------------------------
 
 set -u
@@ -26,13 +24,12 @@ set -u
 CELLS=(
   "agent_color_red|{variation:[agent.color],variation_values:{agent.color:[255,0,0]}}"
   "agent_scale_small|{variation:[agent.scale],variation_values:{agent.scale:20}}"
-  "agent_scale_large|{variation:[agent.scale],variation_values:{agent.scale:60}}"
 )
 ALPHAS=(0.0)
 
-# Flatten 3 cells x 2 alphas into 6 array tasks. cell_idx = task % 3; alpha_idx = task / 3.
-CELL_IDX=$(( SLURM_ARRAY_TASK_ID % 3 ))
-ALPHA_IDX=$(( SLURM_ARRAY_TASK_ID / 3 ))
+NUM_CELLS=${#CELLS[@]}
+CELL_IDX=$(( SLURM_ARRAY_TASK_ID % NUM_CELLS ))
+ALPHA_IDX=$(( SLURM_ARRAY_TASK_ID / NUM_CELLS ))
 ENTRY="${CELLS[$CELL_IDX]}"
 LABEL="${ENTRY%%|*}"
 OVERRIDE_VALUE="${ENTRY##*|}"
@@ -45,7 +42,7 @@ DINO_WM_SRC=/mnt/lustre/work/martius/mot956/dino_wm
 DINO_WM_CKPT=$DINO_WM_SRC/checkpoints/outputs/pusht
 export STABLEWM_HOME=$WORK_BIND_DIR
 
-NUM_EVAL=${NUM_EVAL:-10}
+NUM_EVAL=${NUM_EVAL:-50}
 BATCH_SIZE=${BATCH_SIZE:-10}
 NUM_SAMPLES=${NUM_SAMPLES:-300}
 N_STEPS=${N_STEPS:-30}
