@@ -24,11 +24,11 @@
 set -u
 
 CELLS=(
-  "baseline|null"
   "agent_color_red|{variation:[agent.color],variation_values:{agent.color:[255,0,0]}}"
-  "block_scale_large|{variation:[block.scale],variation_values:{block.scale:60}}"
+  "agent_scale_small|{variation:[agent.scale],variation_values:{agent.scale:20}}"
+  "agent_scale_large|{variation:[agent.scale],variation_values:{agent.scale:60}}"
 )
-ALPHAS=(1.0 0.0)
+ALPHAS=(0.0)
 
 # Flatten 3 cells x 2 alphas into 6 array tasks. cell_idx = task % 3; alpha_idx = task / 3.
 CELL_IDX=$(( SLURM_ARRAY_TASK_ID % 3 ))
