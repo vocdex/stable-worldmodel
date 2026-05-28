@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=0-03:30          # measured: bs=4 50-eps = 2x ~5440s CEM ~= 3h; 3.5h margin
+#SBATCH --time=0-03:40          # measured: bs=4 50-eps = 2x ~5440s CEM ~= 3h; 3.5h margin
 #SBATCH --mem=64G
 #SBATCH --array=0-3
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_pusht_prejepa_chk_%A_%a.out
