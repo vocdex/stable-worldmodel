@@ -131,7 +131,7 @@ class PushT(gym.Env):
                         'scale': swm_spaces.Box(
                             low=20,
                             high=60,
-                            init_value=40,
+                            init_value=30,
                             shape=(),
                             dtype=np.float32,
                         ),
@@ -725,9 +725,6 @@ class PushT(gym.Env):
         color='LightSlateGray',
         mask=pymunk.ShapeFilter.ALL_MASKS(),
     ):
-        # NOTE: previously this had `scale = 30` here which silently overwrote
-        # the kwarg, making `block.scale` variations a complete no-op (pixel
-        # diff 0 between block.scale=20/60/default). Removed.
         mass = 1
         length = 4
         vertices1 = [
