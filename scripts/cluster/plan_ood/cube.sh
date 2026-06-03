@@ -26,13 +26,13 @@
 # clobber each other.
 #
 # Submit:
-#   sbatch scripts/cluster/planood_cube.sh
+#   sbatch scripts/cluster/plan_ood/cube.sh
 #
 # Submit a subset (e.g. just cells 5,8,12 after a partial failure):
-#   sbatch --array=5,8,12 scripts/cluster/planood_cube.sh
+#   sbatch --array=5,8,12 scripts/cluster/plan_ood/cube.sh
 #
 # Override knobs via env:
-#   EPOCH=20 NUM_EVAL=50 NUM_SAMPLES=300 sbatch scripts/cluster/planood_cube.sh
+#   EPOCH=20 NUM_EVAL=50 NUM_SAMPLES=300 sbatch scripts/cluster/plan_ood/cube.sh
 # -----------------------------------------------------------------------------
 
 set -u   # NOT set -e — we want to catch failures per-cell, not crash the array task

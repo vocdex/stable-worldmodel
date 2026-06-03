@@ -17,7 +17,7 @@
 # at epoch 10 with same recipe).
 #
 # Submit:
-#   sbatch scripts/cluster/planbase_cube_epoch_sweep.sh
+#   sbatch scripts/cluster/plan_baseline/cube_epoch_sweep.sh
 # -----------------------------------------------------------------------------
 
 set -u

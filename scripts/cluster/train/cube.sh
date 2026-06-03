@@ -28,7 +28,7 @@
 #   uv sync
 #
 # Submit:
-#   sbatch scripts/cluster/train_cube.sh
+#   sbatch scripts/cluster/train/cube.sh
 # -----------------------------------------------------------------------------
 
 echo "=================================================="

@@ -18,9 +18,9 @@
 # PushT colors are 0-255 ints (NOT 0-1 floats like cube).
 #
 # Submit:
-#   sbatch scripts/cluster/planood_pusht.sh
+#   sbatch scripts/cluster/plan_ood/pusht.sh
 # Override:
-#   EPOCH=20 SEED=42 NUM_EVAL=50 sbatch scripts/cluster/planood_pusht.sh
+#   EPOCH=20 SEED=42 NUM_EVAL=50 sbatch scripts/cluster/plan_ood/pusht.sh
 # -----------------------------------------------------------------------------
 
 set -u
