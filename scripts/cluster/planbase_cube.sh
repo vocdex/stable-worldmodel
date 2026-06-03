@@ -14,9 +14,9 @@
 # Plan with a trained PreJEPA / DINO-WM cube ckpt.
 #
 # Usage:
-#   sbatch scripts/cluster/plan_cube.sh                          # uses epoch_10
-#   EPOCH=20 sbatch scripts/cluster/plan_cube.sh                 # override epoch
-#   sbatch scripts/cluster/plan_cube.sh eval.num_eval=20         # extra hydra overrides
+#   sbatch scripts/cluster/planbase_cube.sh                          # uses epoch_10
+#   EPOCH=20 sbatch scripts/cluster/planbase_cube.sh                 # override epoch
+#   sbatch scripts/cluster/planbase_cube.sh eval.num_eval=20         # extra hydra overrides
 # -----------------------------------------------------------------------------
 
 echo "=================================================="

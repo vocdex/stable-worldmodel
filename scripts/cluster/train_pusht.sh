@@ -19,7 +19,7 @@
 # Step 2: Train predictor on cached features.
 #
 # Submit:
-#   sbatch scripts/cluster/train_prejepa_pusht.sh
+#   sbatch scripts/cluster/train_pusht.sh
 # -----------------------------------------------------------------------------
 
 echo "=================================================="
