@@ -972,6 +972,25 @@ class World:
         self.infos.update(deepcopy(init_step))
         self.infos.update(deepcopy(goal_step))
 
+        # Re-render the START observation under the active variation. The
+        # update above overwrote self.infos['pixels'] with the H5 frame, which
+        # was rendered WITHOUT the variation — so the planner's initial
+        # observation would be unperturbed even though the goal is perturbed
+        # (appearance-mismatched start/goal). The env is now at the H5 start
+        # pose with the variation-modified model, so env.render() gives the
+        # correct variation-applied start frame. Only fires under a variation
+        # override, so baseline / in-distribution evals are byte-identical.
+        if variation_overrides is not None and 'pixels' in self.infos:
+            try:
+                start_frames = np.stack([
+                    env.unwrapped.render() for env in self.envs.unwrapped.envs
+                ])
+                self.infos['pixels'][:] = np.broadcast_to(
+                    start_frames[:, None], self.infos['pixels'].shape
+                )
+            except (AttributeError, ValueError):
+                pass
+
         if (
             variation_overrides is None
             and 'goal' in goal_step
