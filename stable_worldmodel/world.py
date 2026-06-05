@@ -1001,6 +1001,14 @@ class World:
             )
 
         target_frames = torch.stack([ep['pixels'] for ep in data]).numpy()
+        # Snapshot the planner's goal frame NOW, before the eval loop. After the
+        # loop the env may have auto-reset (without the variation options), so
+        # self.infos['goal'] would revert to an unperturbed frame — capturing it
+        # here keeps the video's goal panel consistent with what the planner
+        # actually targeted (perturbed under the active variation).
+        video_goal_frames = (
+            self.infos['goal'][:, -1].copy() if 'goal' in self.infos else None
+        )
         video_frames = np.empty(
             (self.num_envs, eval_budget, *self.infos['pixels'].shape[-3:]),
             dtype=np.uint8,
@@ -1049,7 +1057,15 @@ class World:
                     fps=15,
                     codec='libx264',
                 )
-                goals = np.vstack([target_frames[i, -1], target_frames[i, -1]])
+                # Goal panel: use the planner's ACTUAL goal (snapshotted before
+                # the loop, perturbed under the active variation) rather than the
+                # H5 dataset frame (target_frames[i,-1]), which is unperturbed
+                # and misrepresents what the planner targeted.
+                if video_goal_frames is not None:
+                    goal_img = video_goal_frames[i]
+                else:
+                    goal_img = target_frames[i, -1]
+                goals = np.vstack([goal_img, goal_img])
                 for t in range(steps_used):
                     stacked_frame = np.vstack(
                         [video_frames[i, t], target_frames[i, t % target_len]]
