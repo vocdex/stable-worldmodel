@@ -148,6 +148,7 @@ HYDRA_OVERRIDES=(
     solver.n_steps="$N_STEPS"
     solver.topk="$TOPK"
     seed="$SEED"
+    "+output.video_path=$CELL_DIR/videos"
 )
 if [ "$OVERRIDE_VALUE" != "null" ]; then
     HYDRA_OVERRIDES+=("+eval.variation_overrides=${OVERRIDE_VALUE}")
@@ -224,13 +225,7 @@ else
     fi
 fi
 
-# --- Move rollout videos into the cell dir (default lands in ckpt parent) ---
-ROLLOUT_SRC=$WORK_BIND_DIR/checkpoints/cube_dinov2_small_actiononly_cachedfeats_psmall
-shopt -s nullglob
-for mp4 in "$ROLLOUT_SRC"/rollout_*.mp4; do
-    mv "$mp4" "$CELL_DIR/" 2>/dev/null || true
-done
-shopt -u nullglob
+# Rollout videos land directly in $CELL_DIR/videos via +output.video_path.
 
 # --- Append result row to shared CSV (flock-protected) ---
 # Header written by whichever task grabs the lock first.
