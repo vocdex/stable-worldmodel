@@ -755,6 +755,106 @@ class World:
 
         return results
 
+    def _trust_check_planner_inputs(
+        self,
+        init_step: dict,
+        h5_start_frames: np.ndarray | None,
+        h5_goal_frames: np.ndarray | None,
+    ) -> None:
+        """Verify the planner's start/goal frames under a variation override.
+
+        Three layers, each catching a real historical bug class:
+        1. The frames handed to the planner should DIFFER from the raw H5
+           frames (the perturbation is actually visible — flags silent
+           no-op variations and missing re-renders; warning only, since
+           legitimately mild perturbations exist).
+        2. The env's numerical success target must match the H5 goal state
+           (catches success-metric corruption).
+        3. Re-rendering the goal from the H5 goal state must reproduce the
+           goal frame the planner received (catches the 2026-06 cube bug:
+           a goal frame rendered from the WRONG state — e.g. a reset-time
+           random task goal — is perturbed and plausible-looking, but does
+           not correspond to the H5 goal).
+
+        Raises:
+            RuntimeError: If any invariant is violated.
+        """
+
+        def _mad(a, b):
+            return float(
+                np.mean(np.abs(a.astype(np.float32) - b.astype(np.float32)))
+            )
+
+        goal_now = self.infos['goal'][:, -1] if 'goal' in self.infos else None
+        start_now = (
+            self.infos['pixels'][:, -1] if 'pixels' in self.infos else None
+        )
+
+        # 1. perturbation visible — warning only: legitimately mild cells
+        # exist (e.g. cube.color red vs the red-ish default differs by only
+        # ~0.13/255), so a small diff is suspicious but not proof of a bug.
+        if goal_now is not None and h5_goal_frames is not None:
+            d = _mad(goal_now, h5_goal_frames)
+            if d < 0.5:
+                logging.warning(
+                    f'Trust check: goal frame differs from the unperturbed '
+                    f'H5 frame by only {d:.3f}/255 — verify the variation '
+                    f'override actually changes the rendering.'
+                )
+        if start_now is not None and h5_start_frames is not None:
+            d = _mad(start_now, h5_start_frames)
+            if d < 0.5:
+                logging.warning(
+                    f'Trust check: start frame differs from the unperturbed '
+                    f'H5 frame by only {d:.3f}/255 — verify the variation '
+                    f'override actually changes the rendering.'
+                )
+
+        for i, env in enumerate(self.envs.unwrapped.envs):
+            e = env.unwrapped
+
+            # 2. numerical success target matches the H5 goal state
+            if hasattr(e, 'goal_state') and 'goal_state' in init_step:
+                expected = np.asarray(init_step['goal_state'][i][-1])
+                actual = np.asarray(e.goal_state, dtype=np.float64)
+                if not np.allclose(actual, expected, atol=1e-4):
+                    raise RuntimeError(
+                        f'Trust check: env {i} success target {actual} does '
+                        f'not match the H5 goal state {expected} — goal-state '
+                        f'callable missing or broken.'
+                    )
+
+            # 3. goal frame corresponds to the H5 goal state
+            snapshot = getattr(e, '_goal', None)
+            if snapshot is None or goal_now is None:
+                continue
+            snapshot = np.asarray(snapshot).copy()
+
+            if (
+                hasattr(e, 'render_goal_scene')
+                and 'goal_qpos' in init_step
+                and 'goal_qvel' in init_step
+            ):
+                e.render_goal_scene(
+                    init_step['goal_qpos'][i][-1],
+                    init_step['goal_qvel'][i][-1],
+                )
+            elif hasattr(e, '_set_goal_state') and 'goal_state' in init_step:
+                e._set_goal_state(init_step['goal_state'][i][-1])
+            else:
+                continue
+
+            redo = np.asarray(e._goal)
+            d = _mad(redo, snapshot)
+            if d > 2.0:
+                raise RuntimeError(
+                    f'Trust check: env {i} goal frame does not correspond to '
+                    f'the H5 goal state (mean abs diff {d:.3f}/255 between '
+                    f'the planner goal and a re-render at the H5 goal state).'
+                    f' A goal-render callable is missing or rendered the '
+                    f'wrong state.'
+                )
+
     def evaluate_from_dataset(
         self,
         dataset: Any,
@@ -946,6 +1046,14 @@ class World:
         # expend all data to the right shape (x, y, (original_shape))
         shape_prefix = self.infos['pixels'].shape[:2]
 
+        # snapshot raw H5 frames for the optional runtime trust checks below
+        h5_goal_frames = (
+            goal_step['goal'].copy() if 'goal' in goal_step else None
+        )
+        h5_start_frames = (
+            init_step['pixels'].copy() if 'pixels' in init_step else None
+        )
+
         # When the eval applies a variation override, the H5 'goal' frame was
         # rendered without the variation — using it as the planner's target
         # gives the planner an appearance-mismatched goal (modified-current vs
@@ -997,6 +1105,18 @@ class World:
                     'refusing to plan with an unperturbed start under a '
                     f'variation override. Original error: {e!r}'
                 ) from e
+
+        # Optional runtime verification of the planner inputs (cheap; one
+        # extra goal render per env). Enable with SWM_EVAL_TRUST_CHECKS=1 on
+        # cluster runs so a broken trust chain fails loudly instead of
+        # producing plausible-but-wrong success rates.
+        if (
+            variation_overrides is not None
+            and os.environ.get('SWM_EVAL_TRUST_CHECKS') == '1'
+        ):
+            self._trust_check_planner_inputs(
+                init_step, h5_start_frames, h5_goal_frames
+            )
 
         if (
             variation_overrides is None
