@@ -124,3 +124,46 @@ def test_motion_only_moves_the_distractor():
     assert leaked.sum() == 0, (
         f'{leaked.sum()} changed pixels outside the distractor motion disk'
     )
+
+
+# --------------------------------------------------------------------------
+# distractor.shape — the distractor must not resemble the agent (blue disk)
+# or the block (T); default is a 6-point star (two overlapping triangles)
+# --------------------------------------------------------------------------
+
+
+def shape_options(shape):
+    return {
+        'variation': ['distractor.shape', 'distractor.scale'],
+        'variation_values': {
+            'distractor.shape': shape,
+            'distractor.scale': np.float32(30),
+        },
+    }
+
+
+def render_shape(shape, seed=3):
+    env = make_env()
+    env.reset(seed=seed, options=shape_options(shape))
+    frame = env.render().copy()
+    env.close()
+    return frame
+
+
+def test_distractor_shapes_render_differently():
+    square = render_shape(0)
+    triangle = render_shape(1)
+    star = render_shape(2)
+    assert mad(square, triangle) > 0.05
+    assert mad(square, star) > 0.05
+    assert mad(triangle, star) > 0.05
+
+
+def test_default_distractor_shape_is_star():
+    env = make_env()
+    space = env.variation_space['distractor']['shape']
+    env.close()
+    assert int(space.init_value) == 2
+    default = render_shape(2)
+    star = render_shape(2)
+    assert np.array_equal(default, star)

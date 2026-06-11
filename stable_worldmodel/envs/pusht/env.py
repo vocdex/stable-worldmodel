@@ -209,8 +209,11 @@ class PushT(gym.Env):
                 ),
                 'distractor': swm_spaces.Dict(
                     {
+                        # dark orange: distinct from agent (blue), block
+                        # (slate gray), goal (light green) and background
+                        # (white) so slot models cannot bind it by color.
                         'color': swm_spaces.RGBBox(
-                            init_value=np.array([128, 128, 128], dtype=np.uint8)
+                            init_value=np.array([255, 140, 0], dtype=np.uint8)
                         ),
                         'scale': swm_spaces.Box(
                             low=10, high=40, init_value=20,
@@ -231,6 +234,11 @@ class PushT(gym.Env):
                             init_value=np.array([0.0, 40.0]),
                             shape=(2,), dtype=np.float64,
                         ),
+                        # 0=square (legacy), 1=triangle, 2=star (default).
+                        # The star (two overlapping triangles) is visually
+                        # distinct from both the agent disk and the T block,
+                        # so slot models cannot trivially bind it to either.
+                        'shape': swm_spaces.Discrete(3, init_value=2),
                     }
                 ),
             },
@@ -772,11 +780,23 @@ class PushT(gym.Env):
             color = self.variation_space['distractor']['color'].value.tolist()
             body = pymunk.Body(body_type=pymunk.Body.STATIC)
             body.position = position
-            verts = [(-scale, -scale), (-scale, scale), (scale, scale), (scale, -scale)]
-            shape = pymunk.Poly(body, verts)
-            shape.color = pygame.Color(*color)
-            shape.filter = pymunk.ShapeFilter(categories=0, mask=0)
-            self.space.add(body, shape)
+            kind = int(self.variation_space['distractor']['shape'].value)
+            s = scale
+            if kind == 0:  # square (legacy)
+                vert_sets = [[(-s, -s), (-s, s), (s, s), (s, -s)]]
+            elif kind == 1:  # triangle
+                vert_sets = [[(0, -s), (s, s), (-s, s)]]
+            else:  # star: two overlapping triangles (pymunk polys are convex)
+                vert_sets = [
+                    [(0, -s), (0.87 * s, 0.5 * s), (-0.87 * s, 0.5 * s)],
+                    [(0, s), (0.87 * s, -0.5 * s), (-0.87 * s, -0.5 * s)],
+                ]
+            self.space.add(body)
+            for verts in vert_sets:
+                shape = pymunk.Poly(body, verts)
+                shape.color = pygame.Color(*color)
+                shape.filter = pymunk.ShapeFilter(categories=0, mask=0)
+                self.space.add(shape)
             self.distractor = body
 
         # Add collision handling
