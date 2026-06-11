@@ -93,3 +93,7 @@ quote-style = "single"
 
 [tool.coverage.run]
 omit = ["stable_worldmodel/envs/*"]
+[tool.pytest.ini_options]
+markers = [
+  "slow: slow tests (MuJoCo EGL rendering, model recompiles)",
+]
