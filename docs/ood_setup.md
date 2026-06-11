@@ -189,6 +189,18 @@ Caveats:
 - `agent.color` (cube) and `block.scale` (PushT) were silent no-ops before
   commit `a1437f7`; matrices run before it are stale for those cells.
 
+## Trust verification
+
+Every link of the chain above is pinned by atomic tests in
+`tests/eval/test_ood_trust_chain.py` (goal/start frame correctness vs
+independent re-renders, success-target invariance, baseline byte-identity, a
+no-op sweep over every variation leaf, live-frame tracking — plus regression
+detectors that re-create the missing-goal-callable bug class). At run time,
+`SWM_EVAL_TRUST_CHECKS=1` (exported by the cluster launchers) re-verifies the
+planner inputs inside `evaluate_from_dataset` and fails loudly instead of
+producing plausible-but-wrong success rates. The newer dynamic-distractor
+cells are documented in `dynamic_ood_cells.md`.
+
 ## Running
 
 ```bash

@@ -9,9 +9,15 @@ on the stable-worldmodel branch **`ood-dynamic-distractors`** (cut from
 ![cells](assets/ood_dynamic_cells.png)
 
 Rows: baseline, static distractor (legacy cell), **distractor_moving**,
-**bg_natural_static**, **bg_video_dynamic**. Columns: env steps t=0..12 under
-zero actions + the goal frame the planner receives. Note the dynamic cells
-change *during* the rollout while the goal frame stays frozen.
+**bg_natural_static**, **bg_video_dynamic** (DAVIS bear),
+**bg_video_camouflage** (DAVIS car-roundabout). Columns: env steps t=0..12
+under zero actions + the goal frame the planner receives. Note the dynamic
+cells change *during* the rollout while the goal frame stays frozen.
+
+Slot-mask sanity view (does the distractor/background get its own slots?):
+`cjepa/scripts/analysis/visualize_slots_dynamic_cells.py` renders these same
+cells with hard argmax slot overlays for VideoSAUR + SC-DINOv3-256
+(outputs in `cjepa/outputs/variation_masks_pusht_dynamic/`).
 
 ## What changed in the PushT env (`stable_worldmodel/envs/pusht/env.py`)
 
