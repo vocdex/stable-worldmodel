@@ -15,8 +15,11 @@ Launch scripts (one SLURM array task per OOD cell):
 
 `eval_wm.py` samples `eval.num_eval` (50) `(episode, start_step)` pairs from the
 expert H5 dataset (`pusht_expert_train` / `cube_single_expert`) with a fixed
-`seed` (42). The goal for each pair is **the same episode `goal_offset_steps`
-(25) env-steps later**. Because episode selection only depends on `(seed,
+`seed` (42). The goal for each pair is **the same episode `goal_offset_steps − 1`
+(24) env-steps later** — `load_chunk(ep, start, start + goal_offset_steps)`
+slices with an exclusive end, so the goal row is `start + goal_offset_steps − 1`
+(semantic pinned by `tests/eval/test_ood_trust_chain.py::goal_row`). Because
+episode selection only depends on `(seed,
 num_eval, goal_offset_steps, dataset)`, every cell of the OOD matrix evaluates
 the exact same 50 windows.
 
