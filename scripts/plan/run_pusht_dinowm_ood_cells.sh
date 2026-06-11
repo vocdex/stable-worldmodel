@@ -7,10 +7,9 @@
 # docs/dynamic_ood_cells.md + the legacy static-distractor cell for the
 # static-vs-moving ablation. Idempotent via done.flags.
 #
-# NOTE: each cell's eval.variation_overrides REPLACES the config's baked
-# {block.scale:30, goal.scale:30} default — that's fine today: block.scale
-# init IS 30 (a1437f7) and goal.scale is unused in rendering (pinned by the
-# T6 sweep xfail), so appearance stays consistent with the H5.
+# The pusht_dinowm config no longer bakes a variation_overrides default
+# (it was redundant and hydra struct-mode merge broke `+` appends), so
+# cells append their override with `+eval.variation_overrides=`.
 #
 # Usage:
 #   SEED=0 bash scripts/plan/run_pusht_dinowm_ood_cells.sh
@@ -22,6 +21,11 @@ SEED=${SEED:-0}
 NUM_EVAL=${NUM_EVAL:-50}
 NUM_SAMPLES=${NUM_SAMPLES:-300}
 BATCH_SIZE=${BATCH_SIZE:-4}
+ROLLOUT_CHUNK=${ROLLOUT_CHUNK:-64}   # adapter VRAM knob; 4080: 192 ≈ 13 GB
+# proprio weight in the planning cost (visual + alpha*proprio). 0 = visual-only
+# planning signal, matching SC/LeWM which use no proprio anywhere. NOTE: the
+# dynamics model still consumes proprio tokens internally (trained with them).
+ALPHA=${ALPHA:-0}
 
 export MUJOCO_GL=egl
 export PYTHONUNBUFFERED=1
@@ -39,7 +43,7 @@ CELLS=(
   "bg_video_camouflage|{variation:[background.texture_id],variation_values:{background.texture_id:8}}"
 )
 
-RESULTS_DIR=checkpoints/dino_wm_legacy_pusht/dyn_cells_n${NUM_SAMPLES}_eps${NUM_EVAL}_s${SEED}
+RESULTS_DIR=checkpoints/dino_wm_legacy_pusht/dyn_cells_a${ALPHA}_n${NUM_SAMPLES}_eps${NUM_EVAL}_s${SEED}
 CSV="$RESULTS_DIR/dyn_cells.csv"
 mkdir -p "$RESULTS_DIR"
 
@@ -60,12 +64,14 @@ for ENTRY in "${CELLS[@]}"; do
         --config-name pusht_dinowm
         eval.num_eval="$NUM_EVAL"
         solver.batch_size="$BATCH_SIZE"
+        dino_wm_rollout_chunk="$ROLLOUT_CHUNK"
+        dino_wm_alpha="$ALPHA"
         solver.num_samples="$NUM_SAMPLES"
         seed="$SEED"
         "+output.video_path=$CELL_DIR/videos"
     )
     if [ "$OVERRIDE_VALUE" != "null" ]; then
-        HYDRA_OVERRIDES+=("eval.variation_overrides=${OVERRIDE_VALUE}")
+        HYDRA_OVERRIDES+=("+eval.variation_overrides=${OVERRIDE_VALUE}")
     fi
 
     echo "== $LABEL: launching ($(date))"

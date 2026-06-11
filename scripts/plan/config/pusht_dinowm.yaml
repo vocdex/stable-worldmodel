@@ -41,17 +41,13 @@ eval:
   eval_budget: 50
   img_size: 224
   dataset_name: pusht_expert_train
-  # DINO-WM h5 was generated with block scale hardcoded to 30 (see dino_wm
-  # env/pusht/pusht_env.py:779 — `scale=30` overrides the kwarg). SWM removed
-  # that override and now defaults to 40 from variation_space. The model only
-  # ever saw scale-30 imagery, so we must force scale=30 here, otherwise
-  # current obs (scale 40) and goal obs (h5, scale 30) look different to the
-  # model and SR collapses.
-  variation_overrides:
-    variation: [block.scale, goal.scale]
-    variation_values:
-      block.scale: 30
-      goal.scale: 30
+  # NOTE: this config used to bake variation_overrides {block.scale:30,
+  # goal.scale:30} (DINO-WM trained on scale-30 imagery). Removed: block.scale
+  # defaults to 30 since a1437f7 and goal.scale is unused in rendering (pinned
+  # by the trust-suite T6 sweep), so the override was redundant — and hydra
+  # MERGES `eval.variation_overrides=...` into a baked dict (struct mode
+  # rejects new keys), which broke per-cell overrides. Cells now use
+  # `+eval.variation_overrides=...`.
   stop_on_success: false      # match cjepa: run full eval_budget regardless
   callables:
     - method: _set_state
