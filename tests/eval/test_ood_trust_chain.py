@@ -52,6 +52,21 @@ BLOCK_RED = {
     },
 }
 
+DISTRACTOR_MOVING = {
+    'variation': [
+        'distractor.color',
+        'distractor.scale',
+        'distractor.position',
+        'distractor.motion',
+    ],
+    'variation_values': {
+        'distractor.color': np.array([255, 0, 255], dtype=np.uint8),
+        'distractor.scale': np.float32(25),
+        'distractor.position': np.array([200.0, 200.0]),
+        'distractor.motion': np.array([40.0, 20.0]),
+    },
+}
+
 PUSHT_CALLABLES = [
     {'method': '_set_state', 'args': {'state': {'value': 'state'}}},
     {
@@ -156,7 +171,10 @@ def pusht_dataset(tmp_path_factory):
     h5.close()
 
 
-@pytest.fixture(scope='module')
+# function scope: the StackedWrapper freezes its info-key set (incl.
+# `variation.*` columns) at the FIRST reset, so a world cannot be reused
+# across tests with different variation lists.
+@pytest.fixture
 def pusht_world():
     world = swm.World(
         'swm/PushT-v1',
@@ -193,7 +211,7 @@ def cube_dataset(tmp_path_factory):
     h5.close()
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture
 def cube_world():
     world = swm.World(
         'swm/OGBCube-v0',
@@ -322,6 +340,19 @@ def test_t2_start_frame_matches_h5_start_under_override(pusht_world, pusht_datas
     expected_starts, _ = independent_pusht_frames(h5, BLOCK_RED)
     got = spy.calls[0]['pixels'][:, -1]
     assert mad(got, expected_starts) < 2.0
+
+
+@pytest.mark.parametrize(
+    'overrides', [BLOCK_RED, DISTRACTOR_MOVING], ids=['block_red', 'distractor_moving']
+)
+def test_t1_t2_planner_frames_match_h5_states(pusht_world, pusht_dataset, overrides):
+    """T1+T2 for every override cell used in the OOD matrix (extend the
+    parametrize list whenever a new cell/variation entry is added — T8)."""
+    dataset, h5 = pusht_dataset
+    spy, _ = run_pusht(pusht_world, dataset, overrides=overrides)
+    expected_starts, expected_goals = independent_pusht_frames(h5, overrides)
+    assert mad(spy.calls[0]['goal'][:, -1], expected_goals) < 2.0
+    assert mad(spy.calls[0]['pixels'][:, -1], expected_starts) < 2.0
 
 
 # --------------------------------------------------------------------------

@@ -210,6 +210,16 @@ class PushT(gym.Env):
                             init_value=np.array([80, 80], dtype=np.float64),
                             shape=(2,), dtype=np.float64,
                         ),
+                        # (amplitude_px, period_steps): circular motion around
+                        # `position`, one phase step per env step, cosine phase
+                        # so the amplitude is visible at t=0. amplitude 0 =
+                        # legacy static distractor.
+                        'motion': swm_spaces.Box(
+                            low=np.array([0.0, 4.0]),
+                            high=np.array([120.0, 200.0]),
+                            init_value=np.array([0.0, 40.0]),
+                            shape=(2,), dtype=np.float64,
+                        ),
                     }
                 ),
             },
@@ -247,6 +257,7 @@ class PushT(gym.Env):
         self.render_buffer = None
         self.latest_action = None
         self._has_distractor = False
+        self._distractor_step = 0
 
         self.with_target = with_target
         self.coverage_arr = []
@@ -267,6 +278,7 @@ class PushT(gym.Env):
 
         variations = options.get('variation', DEFAULT_VARIATIONS)
         self._has_distractor = any(v.startswith('distractor') for v in variations)
+        self._distractor_step = 0
 
         ### setup pymunk space
         self._setup()
@@ -349,6 +361,9 @@ class PushT(gym.Env):
 
             # Step physics.
             self.space.step(self.dt)
+
+        if self._has_distractor:
+            self._move_distractor()
 
         # make the observation
         state = self._get_obs()
@@ -538,6 +553,23 @@ class PushT(gym.Env):
     def _handle_collision(self, arbiter, space, data):
         self.n_contact_points += len(arbiter.contact_point_set.points)
 
+    def _distractor_offset(self):
+        amplitude, period = self.variation_space['distractor']['motion'].value
+        if amplitude <= 0:
+            return np.zeros(2)
+        phase = 2 * np.pi * self._distractor_step / period
+        return amplitude * np.array([np.cos(phase), np.sin(phase)])
+
+    def _move_distractor(self):
+        self._distractor_step += 1
+        offset = self._distractor_offset()
+        if not np.any(offset):
+            return
+        base = self.variation_space['distractor']['position'].value
+        self.distractor.position = (base + offset).tolist()
+        # static body: cached shape transforms only refresh on reindex
+        self.space.reindex_shapes_for_body(self.distractor)
+
     def _set_state(self, state):
         if isinstance(state, np.ndarray):
             state = state.tolist()
@@ -661,10 +693,13 @@ class PushT(gym.Env):
             ]
         )
 
-        # Optional static distractor (purely visual, no physics interaction)
+        # Optional distractor (purely visual, no physics interaction)
         if self._has_distractor:
             scale = float(self.variation_space['distractor']['scale'].value)
-            position = self.variation_space['distractor']['position'].value.tolist()
+            position = (
+                self.variation_space['distractor']['position'].value
+                + self._distractor_offset()
+            ).tolist()
             color = self.variation_space['distractor']['color'].value.tolist()
             body = pymunk.Body(body_type=pymunk.Body.STATIC)
             body.position = position
