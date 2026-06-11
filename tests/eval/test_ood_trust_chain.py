@@ -52,19 +52,12 @@ BLOCK_RED = {
     },
 }
 
+# canonical single-factor cell: color/scale/position stay at their defaults
+# (gray, 20, [80, 80]) so the cell is runnable through cjepa's single-factor
+# override runner with the identical definition.
 DISTRACTOR_MOVING = {
-    'variation': [
-        'distractor.color',
-        'distractor.scale',
-        'distractor.position',
-        'distractor.motion',
-    ],
-    'variation_values': {
-        'distractor.color': np.array([255, 0, 255], dtype=np.uint8),
-        'distractor.scale': np.float32(25),
-        'distractor.position': np.array([200.0, 200.0]),
-        'distractor.motion': np.array([40.0, 20.0]),
-    },
+    'variation': ['distractor.motion'],
+    'variation_values': {'distractor.motion': np.array([40.0, 20.0])},
 }
 
 BG_TEXTURE = {

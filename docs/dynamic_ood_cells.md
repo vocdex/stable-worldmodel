@@ -40,9 +40,13 @@ python scripts/data/fetch_textures.py            # in stable-worldmodel
 
 ## Canonical cell definitions
 
+All cells are **single-factor** (decision 2026-06-11) so the same definition
+runs unmodified through cjepa's single-factor override runner and the SWM
+launcher:
+
 | cell | variation_values |
 |---|---|
-| `distractor_moving` | `distractor.color=[255,0,255], distractor.scale=25, distractor.position=[200,200], distractor.motion=[40,20]` |
+| `distractor_moving` | `distractor.motion=[40,20]` (color/scale/position stay at the defaults: gray, 20, [80,80]) |
 | `bg_natural_static` | `background.texture_id=1` |
 | `bg_video_dynamic`  | `background.texture_id=4` |
 
@@ -50,20 +54,13 @@ python scripts/data/fetch_textures.py            # in stable-worldmodel
 
 ## Running through cjepa
 
-- The `bg_*` cells are single-factor and work with the existing runner as-is:
-  `variation.factor=background.texture_id variation.value=1` (resp. `4`).
+- All three cells run through the existing single-factor runner as-is:
+  `variation.factor=distractor.motion variation.value=[40,20]`, resp.
+  `variation.factor=background.texture_id variation.value=1` (or `4`).
   `background.texture_id` is an int — make sure the value is passed as an
   int, not a list (the runner's uint8-array coercion must not apply).
-- `distractor_moving` sets 4 leaves, but the cjepa runner builds overrides
-  from a single `cfg.variation.factor/value` pair (`src/plan/run_cube.py`
-  around the `variation_overrides = {...}` block; same pattern in the pusht
-  runner). Either (a) extend that block to accept a dict of factor→value
-  (small change), or (b) run the single-factor variant
-  `variation.factor=distractor.motion variation.value=[40,20]` — the env
-  enables the distractor whenever any `distractor.*` leaf is varied, with
-  default color/scale/position (gray, 20, [80,80]). If you use (b), rerun
-  the DINO-WM cell with the same single-factor definition so all models see
-  the identical cell.
+  Varying any `distractor.*` leaf enables the distractor; the unvaried
+  leaves keep their defaults.
 - Set `SWM_TEXTURE_DIR` in the job env and run `fetch_textures.py` once on
   the cluster before the `bg_*` cells.
 - Export `SWM_EVAL_TRUST_CHECKS=1`: `evaluate_from_dataset` then verifies at

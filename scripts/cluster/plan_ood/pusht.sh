@@ -42,7 +42,7 @@ CELLS=(
   "agent_color_green|{variation:[agent.color],variation_values:{agent.color:[0,255,0]}}"
   "background_black|{variation:[background.color],variation_values:{background.color:[0,0,0]}}"
   "distractor|{variation:[distractor.color,distractor.scale,distractor.position],variation_values:{distractor.color:[255,0,255],distractor.scale:25,distractor.position:[80,80]}}"
-  "distractor_moving|{variation:[distractor.color,distractor.scale,distractor.position,distractor.motion],variation_values:{distractor.color:[255,0,255],distractor.scale:25,distractor.position:[200,200],distractor.motion:[40,20]}}"
+  "distractor_moving|{variation:[distractor.motion],variation_values:{distractor.motion:[40,20]}}"
   "bg_natural_static|{variation:[background.texture_id],variation_values:{background.texture_id:1}}"
   "bg_video_dynamic|{variation:[background.texture_id],variation_values:{background.texture_id:4}}"
 )
