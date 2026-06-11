@@ -43,10 +43,64 @@ CLIPS = {
 
 CLIP_MAX_FRAMES = 100
 
+# DAVIS 2017 (480p): the standard natural-video source in the visual-RL
+# robustness literature (DMControl-GB etc.; DCS itself uses Kinetics, which
+# is YouTube-ID-distributed and not reproducibly fetchable). --davis
+# downloads the trainval zip once (~800 MB) and extracts these sequences as
+# clip dirs; ids start at 06 so the placeholder ids 1-5 stay stable.
+DAVIS_URL = (
+    'https://data.vision.ee.ethz.ch/csergi/share/davis/'
+    'DAVIS-2017-trainval-480p.zip'
+)
+DAVIS_SEQUENCES = {
+    '06_davis_bear': 'bear',
+    '07_davis_dog': 'dog',
+    '08_davis_car_roundabout': 'car-roundabout',
+}
+
+
+def fetch_davis(out: Path) -> None:
+    import zipfile
+
+    if all((out / name).exists() for name in DAVIS_SEQUENCES):
+        print('davis sequences: exist, skipping')
+        return
+
+    # keep the zip OUTSIDE the texture dir: every entry inside it shifts the
+    # sorted texture_id mapping the envs resolve
+    zip_path = out.parent / 'DAVIS-2017-trainval-480p.zip'
+    if not zip_path.exists():
+        print(f'downloading DAVIS trainval 480p (~800 MB) to {zip_path} ...')
+        urllib.request.urlretrieve(DAVIS_URL, zip_path)
+
+    with zipfile.ZipFile(zip_path) as zf:
+        for name, seq in DAVIS_SEQUENCES.items():
+            clip_dir = out / name
+            if clip_dir.exists():
+                print(f'{name}/: exists, skipping')
+                continue
+            members = sorted(
+                m
+                for m in zf.namelist()
+                if m.startswith(f'DAVIS/JPEGImages/480p/{seq}/')
+                and m.endswith('.jpg')
+            )[:CLIP_MAX_FRAMES]
+            clip_dir.mkdir()
+            for t, member in enumerate(members):
+                with zf.open(member) as f:
+                    frame = iio.imread(f.read(), extension='.jpg')
+                iio.imwrite(clip_dir / f'{t:04d}.png', frame)
+            print(f'{name}/: {len(members)} frames')
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', type=Path, default=None)
+    parser.add_argument(
+        '--davis',
+        action='store_true',
+        help='also fetch DAVIS 2017 sequences (one-time ~800 MB download)',
+    )
     args = parser.parse_args()
 
     out = args.out
@@ -80,6 +134,9 @@ def main():
                 frame = frame[..., :3]
             iio.imwrite(clip_dir / f'{t:04d}.png', frame)
         print(f'{name}/: {min(len(frames), CLIP_MAX_FRAMES)} frames')
+
+    if args.davis:
+        fetch_davis(out)
 
     entries = sorted(out.iterdir())
     print(f'\n{out} ready — background.texture_id mapping:')
