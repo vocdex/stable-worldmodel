@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --time=0-08:00
 #SBATCH --mem=64G
-#SBATCH --array=0-12            # 13 cells; bump as needed
+#SBATCH --array=0-13            # 14 cells; bump as needed
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_pusht_%A_%a.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_pusht_%A_%a.err
 
@@ -44,7 +44,8 @@ CELLS=(
   "distractor|{variation:[distractor.color,distractor.scale,distractor.position],variation_values:{distractor.color:[255,0,255],distractor.scale:25,distractor.position:[80,80]}}"
   "distractor_moving|{variation:[distractor.motion],variation_values:{distractor.motion:[40,20]}}"
   "bg_natural_static|{variation:[background.texture_id],variation_values:{background.texture_id:1}}"
-  "bg_video_dynamic|{variation:[background.texture_id],variation_values:{background.texture_id:4}}"
+  "bg_video_dynamic|{variation:[background.texture_id],variation_values:{background.texture_id:6}}"
+  "bg_video_camouflage|{variation:[background.texture_id],variation_values:{background.texture_id:8}}"
 )
 # bg_* cells need textures: run `python scripts/data/fetch_textures.py` once
 # (populates $SWM_TEXTURE_DIR, default $STABLEWM_HOME-side swm cache).

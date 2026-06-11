@@ -35,7 +35,8 @@ CELLS=(
   "distractor|{variation:[distractor.color,distractor.scale,distractor.position],variation_values:{distractor.color:[255,0,255],distractor.scale:25,distractor.position:[80,80]}}"
   "distractor_moving|{variation:[distractor.motion],variation_values:{distractor.motion:[40,20]}}"
   "bg_natural_static|{variation:[background.texture_id],variation_values:{background.texture_id:1}}"
-  "bg_video_dynamic|{variation:[background.texture_id],variation_values:{background.texture_id:4}}"
+  "bg_video_dynamic|{variation:[background.texture_id],variation_values:{background.texture_id:6}}"
+  "bg_video_camouflage|{variation:[background.texture_id],variation_values:{background.texture_id:8}}"
 )
 
 RESULTS_DIR=checkpoints/dino_wm_legacy_pusht/dyn_cells_n${NUM_SAMPLES}_eps${NUM_EVAL}_s${SEED}

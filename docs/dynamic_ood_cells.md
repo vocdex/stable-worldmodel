@@ -50,17 +50,18 @@ Texture dir resolution: `texture_dir` env kwarg → `$SWM_TEXTURE_DIR` → swm
 cache `~/.stable_worldmodel/textures/`. Populate once with:
 
 ```bash
-python scripts/data/fetch_textures.py            # in stable-worldmodel
-# 1: 01_mountains.png  2: 02_forest.png  3: 03_city.png   (static)
-# 4: 04_cockatoo/      5: 05_newtonscradle/                (clips)
+python scripts/data/fetch_textures.py --davis    # in stable-worldmodel
+# 1: 01_mountains.png  2: 02_forest.png  3: 03_city.png    (static, picsum)
+# 4: 04_cockatoo/      5: 05_newtonscradle/                 (clips, imageio)
+# 6: 06_davis_bear/    7: 07_davis_dog/  8: 08_davis_car_roundabout/ (DAVIS)
 ```
 
-Texture provenance: these are deterministic **placeholders** (picsum stock
-photos + imageio sample videos), NOT the Distracting-Control-Suite sources
-(Kinetics-400 driving videos / DAVIS). The mechanism is source-agnostic —
-for paper-grade DCS-faithful cells, drop DAVIS/Kinetics frames into the same
-texture dir (entry order defines the ids) and re-run only the `bg_*` /
-`floor_*` cells.
+Texture provenance: ids 1–5 are deterministic placeholders (picsum stock
+photos + imageio sample videos); ids 6–8 are **DAVIS 2017** sequences — the
+standard natural-video source in the visual-RL robustness literature
+(DMControl-GB etc.). True DCS uses Kinetics-400, which is YouTube-ID
+distributed and not reproducibly fetchable; DAVIS is the accepted stand-in.
+The canonical dynamic cells use the DAVIS clips.
 
 ## Canonical cell definitions
 
@@ -72,10 +73,11 @@ launcher:
 |---|---|---|
 | `distractor_moving` | PushT | `distractor.motion=[40,20]` (unvaried leaves keep defaults: orange star, scale 20, position [80,80]) |
 | `bg_natural_static` | PushT | `background.texture_id=1` |
-| `bg_video_dynamic`  | PushT | `background.texture_id=4` |
+| `bg_video_dynamic`  | PushT | `background.texture_id=6` (DAVIS bear — objects stay discernible) |
+| `bg_video_camouflage` | PushT | `background.texture_id=8` (DAVIS car-roundabout — gray street nearly camouflages the gray T; extra-hard tier) |
 | `floor_natural_static` | Cube | `floor.texture_id=1` |
 
-(SWM-side launchers: `scripts/cluster/plan_ood/pusht.sh` cells 10–12,
+(SWM-side launchers: `scripts/cluster/plan_ood/pusht.sh` cells 10–13,
 `scripts/cluster/plan_ood/cube.sh` cell 15.)
 
 ## Running through cjepa
