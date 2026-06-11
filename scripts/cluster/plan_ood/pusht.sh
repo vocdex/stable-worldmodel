@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --time=0-08:00
 #SBATCH --mem=64G
-#SBATCH --array=0-9             # 10 cells; bump as needed
+#SBATCH --array=0-12            # 13 cells; bump as needed
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_pusht_%A_%a.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_pusht_%A_%a.err
 
@@ -42,7 +42,12 @@ CELLS=(
   "agent_color_green|{variation:[agent.color],variation_values:{agent.color:[0,255,0]}}"
   "background_black|{variation:[background.color],variation_values:{background.color:[0,0,0]}}"
   "distractor|{variation:[distractor.color,distractor.scale,distractor.position],variation_values:{distractor.color:[255,0,255],distractor.scale:25,distractor.position:[80,80]}}"
+  "distractor_moving|{variation:[distractor.color,distractor.scale,distractor.position,distractor.motion],variation_values:{distractor.color:[255,0,255],distractor.scale:25,distractor.position:[200,200],distractor.motion:[40,20]}}"
+  "bg_natural_static|{variation:[background.texture_id],variation_values:{background.texture_id:1}}"
+  "bg_video_dynamic|{variation:[background.texture_id],variation_values:{background.texture_id:4}}"
 )
+# bg_* cells need textures: run `python scripts/data/fetch_textures.py` once
+# (populates $SWM_TEXTURE_DIR, default $STABLEWM_HOME-side swm cache).
 
 if [ "$SLURM_ARRAY_TASK_ID" -ge "${#CELLS[@]}" ]; then
     echo "ERROR: array task $SLURM_ARRAY_TASK_ID out of range (have ${#CELLS[@]} cells)"
@@ -93,6 +98,9 @@ export TORCH_HOME=$WORK_BIND_DIR/torch_hub
 export PYTHONUNBUFFERED=1
 export MUJOCO_GL=egl
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# fail loudly if the eval trust chain is broken (goal/start frame checks)
+export SWM_EVAL_TRUST_CHECKS=1
+export SWM_TEXTURE_DIR=${SWM_TEXTURE_DIR:-$WORK_BIND_DIR/textures}
 
 if [ ! -e "$STABLEWM_HOME/datasets" ] && [ -d "$STABLEWM_HOME/dataset" ]; then
     ln -s "$STABLEWM_HOME/dataset" "$STABLEWM_HOME/datasets"
