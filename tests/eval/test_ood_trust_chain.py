@@ -67,6 +67,11 @@ DISTRACTOR_MOVING = {
     },
 }
 
+BG_TEXTURE = {
+    'variation': ['background.texture_id'],
+    'variation_values': {'background.texture_id': 1},
+}
+
 PUSHT_CALLABLES = [
     {'method': '_set_state', 'args': {'state': {'value': 'state'}}},
     {
@@ -148,6 +153,25 @@ class SpyPolicy(BasePolicy):
 # --------------------------------------------------------------------------
 # fixtures
 # --------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True, scope='module')
+def texture_dir(tmp_path_factory):
+    """Provide background textures so `background.texture_id` is renderable
+    (the T6 sweep probes every leaf, including texture index 1)."""
+    import imageio
+
+    root = tmp_path_factory.mktemp('trust_textures')
+    rng = np.random.default_rng(0)
+    img = rng.integers(0, 255, size=(64, 64, 3), dtype=np.uint8)
+    imageio.imwrite(root / 'noise.png', img)
+    old = os.environ.get('SWM_TEXTURE_DIR')
+    os.environ['SWM_TEXTURE_DIR'] = str(root)
+    yield root
+    if old is None:
+        os.environ.pop('SWM_TEXTURE_DIR', None)
+    else:
+        os.environ['SWM_TEXTURE_DIR'] = old
 
 
 @pytest.fixture(scope='module')
@@ -343,7 +367,9 @@ def test_t2_start_frame_matches_h5_start_under_override(pusht_world, pusht_datas
 
 
 @pytest.mark.parametrize(
-    'overrides', [BLOCK_RED, DISTRACTOR_MOVING], ids=['block_red', 'distractor_moving']
+    'overrides',
+    [BLOCK_RED, DISTRACTOR_MOVING, BG_TEXTURE],
+    ids=['block_red', 'distractor_moving', 'bg_texture'],
 )
 def test_t1_t2_planner_frames_match_h5_states(pusht_world, pusht_dataset, overrides):
     """T1+T2 for every override cell used in the OOD matrix (extend the

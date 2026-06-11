@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 import cv2
 import gymnasium as gym
 import numpy as np
@@ -36,8 +39,10 @@ class PushT(gym.Env):
         render_mode='rgb_array',
         relative=True,
         init_value=None,
+        texture_dir=None,
     ):
         self._seed = None
+        self._texture_dir = texture_dir
         self.window_size = ws = 512  # The size of the PyGame window
         self.render_size = resolution
         self.relative = relative
@@ -191,6 +196,12 @@ class PushT(gym.Env):
                                 np.array([255, 255, 255], dtype=np.uint8)
                             )
                         ),
+                        # 1-based index into the sorted entries of the texture
+                        # dir (`texture_dir` kwarg > $SWM_TEXTURE_DIR > swm
+                        # cache `textures/`). 0 = plain background color. A
+                        # file entry is a static image; a directory entry is a
+                        # clip advancing one frame per env step (looping).
+                        'texture_id': swm_spaces.Discrete(17, init_value=0),
                     }
                 ),
                 'rendering': swm_spaces.Dict(
@@ -258,6 +269,9 @@ class PushT(gym.Env):
         self.latest_action = None
         self._has_distractor = False
         self._distractor_step = 0
+        self._texture_step = 0
+        self._bg_surface = None
+        self._bg_clip = None
 
         self.with_target = with_target
         self.coverage_arr = []
@@ -279,6 +293,8 @@ class PushT(gym.Env):
         variations = options.get('variation', DEFAULT_VARIATIONS)
         self._has_distractor = any(v.startswith('distractor') for v in variations)
         self._distractor_step = 0
+        self._texture_step = 0
+        self._load_background_texture()
 
         ### setup pymunk space
         self._setup()
@@ -364,6 +380,7 @@ class PushT(gym.Env):
 
         if self._has_distractor:
             self._move_distractor()
+        self._texture_step += 1
 
         # make the observation
         state = self._get_obs()
@@ -450,6 +467,14 @@ class PushT(gym.Env):
 
         canvas = pygame.Surface((self.window_size, self.window_size))
         canvas.fill(self.variation_space['background']['color'].value)
+
+        if self._bg_clip is not None:
+            frame_path = self._bg_clip[
+                self._texture_step % len(self._bg_clip)
+            ]
+            canvas.blit(self._load_texture_surface(frame_path), (0, 0))
+        elif self._bg_surface is not None:
+            canvas.blit(self._bg_surface, (0, 0))
 
         self.screen = canvas
 
@@ -552,6 +577,50 @@ class PushT(gym.Env):
 
     def _handle_collision(self, arbiter, space, data):
         self.n_contact_points += len(arbiter.contact_point_set.points)
+
+    def _resolve_texture_dir(self):
+        if self._texture_dir is not None:
+            return Path(self._texture_dir)
+        env_dir = os.environ.get('SWM_TEXTURE_DIR')
+        if env_dir:
+            return Path(env_dir)
+        from stable_worldmodel.data.utils import get_cache_dir
+
+        return get_cache_dir(sub_folder='textures')
+
+    def _load_texture_surface(self, path):
+        surface = pygame.image.load(str(path))
+        return pygame.transform.smoothscale(
+            surface, (self.window_size, self.window_size)
+        )
+
+    def _load_background_texture(self):
+        self._bg_surface = None
+        self._bg_clip = None
+        texture_id = int(
+            self.variation_space['background']['texture_id'].value
+        )
+        if texture_id == 0:
+            return
+
+        texture_dir = self._resolve_texture_dir()
+        entries = (
+            sorted(texture_dir.iterdir()) if texture_dir.is_dir() else []
+        )
+        if texture_id > len(entries):
+            raise FileNotFoundError(
+                f'background.texture_id={texture_id} but texture dir '
+                f'{texture_dir} has only {len(entries)} entries'
+            )
+
+        entry = entries[texture_id - 1]
+        if entry.is_dir():
+            frames = sorted(entry.iterdir())
+            if not frames:
+                raise FileNotFoundError(f'empty texture clip dir {entry}')
+            self._bg_clip = frames
+        else:
+            self._bg_surface = self._load_texture_surface(entry)
 
     def _distractor_offset(self):
         amplitude, period = self.variation_space['distractor']['motion'].value
