@@ -988,8 +988,15 @@ class World:
                 self.infos['pixels'][:] = np.broadcast_to(
                     start_frames[:, None], self.infos['pixels'].shape
                 )
-            except (AttributeError, ValueError):
-                pass
+            except (AttributeError, ValueError) as e:
+                # Don't silently fall back to an unperturbed start frame under a
+                # variation — that's a correctness hole (perturbed goal vs clean
+                # start). Surface it loudly so it can't pass unnoticed.
+                raise RuntimeError(
+                    'Failed to re-render the variation-perturbed start frame; '
+                    'refusing to plan with an unperturbed start under a '
+                    f'variation override. Original error: {e!r}'
+                ) from e
 
         if (
             variation_overrides is None

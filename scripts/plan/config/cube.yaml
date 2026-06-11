@@ -55,6 +55,20 @@ eval:
           value: goal_privileged_block_0_pos
         target_quat:
           value: goal_privileged_block_0_quat
+    # -- render the goal frame at the H5 goal state under the active variation.
+    # Without this, evaluate_from_dataset re-pulls env._goal (= _cur_goal_rendered)
+    # which the env set from a RANDOM, unseeded predefined task at reset — so the
+    # planner's goal image shows the cube at a random position, not the success
+    # target. render_goal_scene sets the full state to the H5 goal qpos/qvel,
+    # renders (under the variation), and restores the start state. Must run AFTER
+    # set_state so it restores to the correct start. (goal_qpos/goal_qvel are the
+    # goal-frame columns, exposed by world.py's goal_ prefix merge.)
+    - method: render_goal_scene
+      args:
+        qpos:
+          value: goal_qpos
+        qvel:
+          value: goal_qvel
 
 output:
   filename: ogb_cube_results.txt
