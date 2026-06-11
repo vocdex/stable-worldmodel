@@ -124,6 +124,8 @@ export TORCH_HOME=$WORK_BIND_DIR/torch_hub
 export PYTHONUNBUFFERED=1
 export MUJOCO_GL=egl
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# fail loudly if the eval trust chain is broken (goal/start frame checks)
+export SWM_EVAL_TRUST_CHECKS=1
 
 # Dataset symlink (idempotent)
 if [ ! -e "$STABLEWM_HOME/datasets" ] && [ -d "$STABLEWM_HOME/dataset" ]; then
