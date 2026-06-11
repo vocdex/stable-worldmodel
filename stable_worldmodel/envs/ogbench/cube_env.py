@@ -37,7 +37,10 @@ from ogbench.manipspace import lie
 from ogbench.manipspace.envs.manipspace_env import ManipSpaceEnv
 
 from stable_worldmodel import spaces as swm_spaces
-from stable_worldmodel.envs.utils import perturb_camera_angle
+from stable_worldmodel.envs.utils import (
+    perturb_camera_angle,
+    resolve_texture_entry,
+)
 
 DEFAULT_VARIATIONS = (
     'cube.start_position',
@@ -100,6 +103,7 @@ class CubeEnv(ManipSpaceEnv):
         multiview=False,
         height=224,
         width=224,
+        texture_dir=None,
         *args,
         **kwargs,
     ):
@@ -135,6 +139,8 @@ class CubeEnv(ManipSpaceEnv):
         self._env_type = env_type
         self._permute_blocks = permute_blocks
         self._multiview = multiview
+        self._texture_dir = texture_dir
+        self._applied_floor_texture = None
         self.env_name = 'Cube'
 
         if self._env_type == 'single':
@@ -291,6 +297,12 @@ class CubeEnv(ManipSpaceEnv):
                                 [[0.08, 0.11, 0.16], [0.15, 0.18, 0.25]]
                             ),
                         ),
+                        # 1-based index into the sorted texture-dir entries
+                        # (same contract as PushT background.texture_id);
+                        # 0 = procedural checker. Static image files only —
+                        # clip dirs raise until per-step texture upload is
+                        # wired.
+                        'texture_id': swm_spaces.Discrete(17, init_value=0),
                     }
                 ),
                 'camera': swm_spaces.Dict(
@@ -992,6 +1004,36 @@ class CubeEnv(ManipSpaceEnv):
         )
         grid_texture.rgb1 = self.variation_space['floor']['color'].value[0]
         grid_texture.rgb2 = self.variation_space['floor']['color'].value[1]
+
+        # Floor image texture (replaces the procedural checker)
+        floor_texture = None
+        floor_texture_id = int(
+            self.variation_space['floor']['texture_id'].value
+        )
+        if floor_texture_id > 0:
+            entry = resolve_texture_entry(floor_texture_id, self._texture_dir)
+            if entry.is_dir():
+                raise NotImplementedError(
+                    'clip-dir floor textures (dynamic floor) are not '
+                    'supported on cube yet; use a static image file'
+                )
+            floor_texture = entry.resolve()
+
+        if floor_texture != self._applied_floor_texture:
+            texture_changed = True
+            self._applied_floor_texture = floor_texture
+
+        grid_material = mjcf_model.find('material', 'grid')
+        if floor_texture is not None:
+            grid_texture.builtin = 'none'
+            grid_texture.mark = 'none'
+            grid_texture.file = str(floor_texture)
+            grid_material.texuniform = 'false'
+        else:
+            grid_texture.builtin = 'checker'
+            grid_texture.mark = 'cross'
+            grid_texture.file = None
+            grid_material.texuniform = 'true'
 
         # Modify arm color
         agent_color_changed = not np.allclose(

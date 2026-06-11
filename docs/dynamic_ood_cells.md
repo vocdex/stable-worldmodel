@@ -15,28 +15,52 @@ change *during* the rollout while the goal frame stays frozen.
 
 ## What changed in the PushT env (`stable_worldmodel/envs/pusht/env.py`)
 
-Two new variation leaves; **defaults reproduce the legacy env byte-for-byte**:
-
 1. **`distractor.motion`** — Box `(amplitude_px, period_steps)`, init `(0, 40)`.
    The (visual-only, collision-free) distractor moves on a circle of radius
    `amplitude` around `distractor.position`, advancing one phase step per env
    step. Cosine phase ⇒ the amplitude already offsets the distractor at t=0,
    so start/goal frames reflect the cell. `amplitude=0` = legacy static.
 
-2. **`background.texture_id`** — Discrete 0..16, init 0 (= plain background
+2. **`distractor.shape`** — Discrete: 0=square (legacy), 1=triangle,
+   2=**star (default)**, and the default distractor color is now dark
+   orange. Both chosen so the distractor resembles neither the agent (blue
+   disk) nor the block (slate-gray T): if a slot model still misbinds it
+   into a task slot, that is a genuine binding failure, not an artifact of
+   look-alike shapes. The legacy gray square is reproducible with
+   `distractor.shape=0, distractor.color=[128,128,128]`.
+
+3. **`background.texture_id`** — Discrete 0..16, init 0 (= plain background
    color). A value k≥1 selects the k-th sorted entry of the texture dir:
    an image **file** is a static background; a **directory** of frames is a
    clip advancing one frame per env step (looping). Drawn behind
    goal-marker/block/agent. A missing texture **raises** (no silent no-op).
+
+## What changed in the Cube env (`stable_worldmodel/envs/ogbench/cube_env.py`)
+
+**`floor.texture_id`** — same indexing contract as PushT: a static image file
+replaces the procedural checker floor (recompiles the model; `texture_dir`
+kwarg / `$SWM_TEXTURE_DIR` resolution shared via
+`stable_worldmodel.envs.utils.resolve_texture_entry`). **Static images only —
+clip dirs raise** `NotImplementedError` until per-step MuJoCo texture upload
+is wired. MuJoCo accepts **PNG only** (the fetch script stores PNG).
+
+![cube floor](assets/cube_floor_textures.png)
 
 Texture dir resolution: `texture_dir` env kwarg → `$SWM_TEXTURE_DIR` → swm
 cache `~/.stable_worldmodel/textures/`. Populate once with:
 
 ```bash
 python scripts/data/fetch_textures.py            # in stable-worldmodel
-# 1: 01_mountains.jpg  2: 02_forest.jpg  3: 03_city.jpg   (static)
+# 1: 01_mountains.png  2: 02_forest.png  3: 03_city.png   (static)
 # 4: 04_cockatoo/      5: 05_newtonscradle/                (clips)
 ```
+
+Texture provenance: these are deterministic **placeholders** (picsum stock
+photos + imageio sample videos), NOT the Distracting-Control-Suite sources
+(Kinetics-400 driving videos / DAVIS). The mechanism is source-agnostic —
+for paper-grade DCS-faithful cells, drop DAVIS/Kinetics frames into the same
+texture dir (entry order defines the ids) and re-run only the `bg_*` /
+`floor_*` cells.
 
 ## Canonical cell definitions
 
@@ -44,13 +68,15 @@ All cells are **single-factor** (decision 2026-06-11) so the same definition
 runs unmodified through cjepa's single-factor override runner and the SWM
 launcher:
 
-| cell | variation_values |
-|---|---|
-| `distractor_moving` | `distractor.motion=[40,20]` (color/scale/position stay at the defaults: gray, 20, [80,80]) |
-| `bg_natural_static` | `background.texture_id=1` |
-| `bg_video_dynamic`  | `background.texture_id=4` |
+| cell | env | variation_values |
+|---|---|---|
+| `distractor_moving` | PushT | `distractor.motion=[40,20]` (unvaried leaves keep defaults: orange star, scale 20, position [80,80]) |
+| `bg_natural_static` | PushT | `background.texture_id=1` |
+| `bg_video_dynamic`  | PushT | `background.texture_id=4` |
+| `floor_natural_static` | Cube | `floor.texture_id=1` |
 
-(SWM-side launcher: `scripts/cluster/plan_ood/pusht.sh`, cells 10–12.)
+(SWM-side launchers: `scripts/cluster/plan_ood/pusht.sh` cells 10–12,
+`scripts/cluster/plan_ood/cube.sh` cell 15.)
 
 ## Running through cjepa
 

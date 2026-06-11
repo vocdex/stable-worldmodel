@@ -1,4 +1,6 @@
+import os
 from collections.abc import Sequence
+from pathlib import Path
 
 import numpy as np
 import pygame
@@ -9,6 +11,35 @@ from pymunk.vec2d import Vec2d
 
 
 positive_y_is_up: bool = False
+
+
+def resolve_texture_entry(texture_id: int, texture_dir=None) -> Path:
+    """Resolve a 1-based texture index to an entry of the texture directory.
+
+    Directory resolution order: explicit `texture_dir` > $SWM_TEXTURE_DIR >
+    the swm cache `textures/` folder (populate with
+    scripts/data/fetch_textures.py). Entries are the SORTED children of that
+    directory; a file is a static image, a sub-directory is a frame clip.
+
+    Raises:
+        FileNotFoundError: If the index exceeds the available entries.
+    """
+    if texture_dir is not None:
+        tdir = Path(texture_dir)
+    elif os.environ.get('SWM_TEXTURE_DIR'):
+        tdir = Path(os.environ['SWM_TEXTURE_DIR'])
+    else:
+        from stable_worldmodel.data.utils import get_cache_dir
+
+        tdir = get_cache_dir(sub_folder='textures')
+
+    entries = sorted(tdir.iterdir()) if tdir.is_dir() else []
+    if texture_id > len(entries):
+        raise FileNotFoundError(
+            f'texture_id={texture_id} but texture dir {tdir} has only '
+            f'{len(entries)} entries'
+        )
+    return entries[texture_id - 1]
 
 
 class DrawOptions(pymunk.SpaceDebugDrawOptions):

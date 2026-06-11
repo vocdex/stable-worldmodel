@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --time=0-03:35          # per-task budget; measured ~3h16m/cell (2x 5660s CEM + overhead) at num_eval=50, bs=4 — ~45 min leeway
 #SBATCH --mem=64G
-#SBATCH --array=0-14            # 15 cells (full cjepa cube_ood_cem300 matrix)
+#SBATCH --array=0-15            # 16 cells (cjepa cube_ood_cem300 matrix + floor_natural_static)
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_cube_%A_%a.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_cube_%A_%a.err
 
@@ -61,7 +61,11 @@ CELLS=(
   "camera_pitch_p5|{variation:[camera.angle_delta],variation_values:{camera.angle_delta:[[0.0,5.0]]}}"
   "light_intensity_dim|{variation:[light.intensity],variation_values:{light.intensity:[0.3]}}"
   "light_intensity_bright|{variation:[light.intensity],variation_values:{light.intensity:[0.95]}}"
+  "floor_natural_static|{variation:[floor.texture_id],variation_values:{floor.texture_id:1}}"
 )
+# floor_natural_static (cell 15) needs textures: run
+# `python scripts/data/fetch_textures.py` once with SWM_TEXTURE_DIR set.
+# Submit it alone with: sbatch --array=15 scripts/cluster/plan_ood/cube.sh
 
 if [ "$SLURM_ARRAY_TASK_ID" -ge "${#CELLS[@]}" ]; then
     echo "ERROR: array task $SLURM_ARRAY_TASK_ID out of range (have ${#CELLS[@]} cells)"
@@ -126,6 +130,7 @@ export MUJOCO_GL=egl
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # fail loudly if the eval trust chain is broken (goal/start frame checks)
 export SWM_EVAL_TRUST_CHECKS=1
+export SWM_TEXTURE_DIR=${SWM_TEXTURE_DIR:-$WORK_BIND_DIR/textures}
 
 # Dataset symlink (idempotent)
 if [ ! -e "$STABLEWM_HOME/datasets" ] && [ -d "$STABLEWM_HOME/dataset" ]; then

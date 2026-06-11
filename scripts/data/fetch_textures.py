@@ -28,10 +28,11 @@ import imageio.v3 as iio
 import stable_worldmodel as swm
 
 
+# stored as PNG: MuJoCo (cube floor texture) only accepts PNG files
 IMAGES = {
-    '01_mountains.jpg': 'https://picsum.photos/id/1018/512/512.jpg',
-    '02_forest.jpg': 'https://picsum.photos/id/1015/512/512.jpg',
-    '03_city.jpg': 'https://picsum.photos/id/1011/512/512.jpg',
+    '01_mountains.png': 'https://picsum.photos/id/1018/512/512.jpg',
+    '02_forest.png': 'https://picsum.photos/id/1015/512/512.jpg',
+    '03_city.png': 'https://picsum.photos/id/1011/512/512.jpg',
 }
 
 # imageio standard sample videos (downloaded once into imageio's cache)
@@ -63,7 +64,8 @@ def main():
         if path.exists():
             print(f'{name}: exists, skipping')
             continue
-        urllib.request.urlretrieve(url, path)
+        tmp, _ = urllib.request.urlretrieve(url)
+        iio.imwrite(path, iio.imread(tmp))  # re-encode as PNG
         print(f'{name}: downloaded')
 
     for name, source in CLIPS.items():
