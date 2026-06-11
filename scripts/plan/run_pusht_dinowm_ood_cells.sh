@@ -26,6 +26,11 @@ ROLLOUT_CHUNK=${ROLLOUT_CHUNK:-64}   # adapter VRAM knob; 4080: 192 ≈ 13 GB
 # planning signal, matching SC/LeWM which use no proprio anywhere. NOTE: the
 # dynamics model still consumes proprio tokens internally (trained with them).
 ALPHA=${ALPHA:-0}
+# BLIND=1: also blind the proprio INPUT (training-mean token) — no privileged
+# state anywhere. Default off; decision 2026-06-11: alpha=0 unblinded first,
+# blinded comparison later. Caveat: ckpt was trained WITH informative proprio,
+# so blinded SR may understate a pixels-only-trained DINO-WM.
+BLIND=${BLIND:-0}
 
 export MUJOCO_GL=egl
 export PYTHONUNBUFFERED=1
@@ -43,7 +48,8 @@ CELLS=(
   "bg_video_camouflage|{variation:[background.texture_id],variation_values:{background.texture_id:8}}"
 )
 
-RESULTS_DIR=checkpoints/dino_wm_legacy_pusht/dyn_cells_a${ALPHA}_n${NUM_SAMPLES}_eps${NUM_EVAL}_s${SEED}
+BLIND_TAG=$([ "$BLIND" = 1 ] && echo "_blind" || echo "")
+RESULTS_DIR=checkpoints/dino_wm_legacy_pusht/dyn_cells_a${ALPHA}${BLIND_TAG}_n${NUM_SAMPLES}_eps${NUM_EVAL}_s${SEED}
 CSV="$RESULTS_DIR/dyn_cells.csv"
 mkdir -p "$RESULTS_DIR"
 
@@ -66,6 +72,7 @@ for ENTRY in "${CELLS[@]}"; do
         solver.batch_size="$BATCH_SIZE"
         dino_wm_rollout_chunk="$ROLLOUT_CHUNK"
         dino_wm_alpha="$ALPHA"
+        dino_wm_blind_proprio=$([ "$BLIND" = 1 ] && echo true || echo false)
         solver.num_samples="$NUM_SAMPLES"
         seed="$SEED"
         "+output.video_path=$CELL_DIR/videos"

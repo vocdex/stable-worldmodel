@@ -78,6 +78,7 @@ def load_dino_wm_external(
     dino_wm_src: str | Path = '/home/nazirjon/Desktop/dino_wm',
     encoder_name: str | None = None,
     alpha: float = 1.0,
+    blind_proprio: bool = False,
     rollout_chunk: int = 64,
 ) -> 'DinoWMAdapter':
     """Load an original DINO-WM checkpoint and wrap it as a planner-compatible model.
@@ -199,6 +200,7 @@ def load_dino_wm_external(
         action_input_dim=action_input_dim,
         proprio_input_dim=proprio_input_dim,
         alpha=alpha,
+        blind_proprio=blind_proprio,
         rollout_chunk=rollout_chunk,
         dw_action_mean=dw_action_mean,
         dw_action_std=dw_action_std,
@@ -222,6 +224,7 @@ class DinoWMAdapter(nn.Module):
         action_input_dim: int,
         proprio_input_dim: int,
         alpha: float = 1.0,
+        blind_proprio: bool = False,
         rollout_chunk: int = 64,
         dw_action_mean=None,
         dw_action_std=None,
@@ -234,6 +237,10 @@ class DinoWMAdapter(nn.Module):
         self.action_input_dim = action_input_dim
         self.proprio_input_dim = proprio_input_dim
         self.alpha = alpha
+        # Replace the real proprio input with the training mean (== zeros in
+        # the standardized space the eval feeds us). The dynamics then carry
+        # no privileged state information, matching pixel-only baselines.
+        self.blind_proprio = blind_proprio
         # DINO-WM's predictor materializes a full (B*N, heads, T*P, T*P)
         # attention matrix per layer — at T=3, P=196 each row is 588 tokens, so
         # one float32 attention map is ~6.6 GB at N=300. Chunk the rollout
@@ -314,6 +321,10 @@ class DinoWMAdapter(nn.Module):
         # history — collapse the time dim down to 1 with the last frame.
         goal = _strip(info_dict['goal']).to(device)[:, -1:]
         goal_proprio = _strip(info_dict['goal_proprio']).to(device)[:, -1:]
+
+        if self.blind_proprio:
+            proprio = torch.zeros_like(proprio)
+            goal_proprio = torch.zeros_like(goal_proprio)
 
         if A != self.action_input_dim:
             raise ValueError(

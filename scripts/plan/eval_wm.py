@@ -125,6 +125,7 @@ def run(cfg: DictConfig):
                     'dino_wm_src', '/home/nazirjon/Desktop/dino_wm'
                 ),
                 alpha=cfg.get('dino_wm_alpha', 1.0),
+                blind_proprio=cfg.get('dino_wm_blind_proprio', False),
                 rollout_chunk=cfg.get('dino_wm_rollout_chunk', 64),
             )
         else:

@@ -24,6 +24,7 @@ policy_kind: dino_wm_external
 policy: /home/nazirjon/Desktop/dino_wm/checkpoints/outputs/pusht
 dino_wm_src: /home/nazirjon/Desktop/dino_wm
 dino_wm_alpha: 1.0           # paper sweeps {0.1, 1.0}
+dino_wm_blind_proprio: false # true: feed training-mean proprio (no privileged state input)
 dino_wm_rollout_chunk: 64    # CEM batch chunk inside the adapter; lower → less VRAM, slower
 # NOTE: action/proprio normalization is handled by SWM's policy + CEM stack
 # (process[k].transform in _prepare_info; CEM samples in standardized space).
