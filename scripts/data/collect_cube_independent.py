@@ -3,12 +3,17 @@
 For each episode:
 - Arm/gripper qpos are borrowed from a random expert trajectory so the arm
   follows realistic motion patterns.
-- The cube follows a smooth scripted random walk on the table, decorrelated
-  from the arm.
+- The cube follows a scripted trajectory composed of motion segments (idle,
+  random walk, impulse-with-friction-decay, decelerating slide, in-place
+  spin), decorrelated from the arm.  Use --walk-only to reproduce the
+  legacy single-mode random walk.
 - When the scripted cube position would overlap the arm (contact detected
   via MuJoCo's collision query), the cube is nudged along the contact
   normals until the overlap is resolved.  This produces visually plausible
   collisions: the arm appears to push the cube out of its way.
+- With --shadow-class, segmentation gains label 3 = shadow, extracted by
+  rendering each frame twice (with/without shadows) and marking background
+  pixels that brighten.
 
 Output H5 matches the schema of cube_single_expert_256.h5 so the existing
 SlotContrast converter (save_cube.py) works unchanged.
@@ -16,8 +21,8 @@ SlotContrast converter (save_cube.py) works unchanged.
 Usage:
     MUJOCO_GL=egl python scripts/data/collect_cube_independent.py \
         --src-path ~/.stable_worldmodel/cube_single/cube_single_expert_256.h5 \
-        --out-path ~/.stable_worldmodel/cube_single/cube_single_indep_256.h5 \
-        --num-episodes 2000 --seed 0
+        --out-path ~/.stable_worldmodel/cube_single/cube_single_indep_motion_256.h5 \
+        --num-episodes 4000 --seed 1 --shadow-class
 """
 import argparse
 import os
@@ -28,14 +33,16 @@ import h5py
 import hdf5plugin
 import mujoco
 import numpy as np
-from scipy.ndimage import binary_dilation
 import tqdm
 
+from cube_seg_utils import (
+    LABEL_ARM,
+    LABEL_CUBE,
+    add_shadow_class,
+    build_geom_to_label,
+    seg_from_render,
+)
 from stable_worldmodel.envs.ogbench.cube_env import CubeEnv
-
-LABEL_BG = 0
-LABEL_CUBE = 1
-LABEL_ARM = 2
 
 CUBE_QPOS_START = 14  # qpos[14:21] = freejoint (x,y,z,qw,qx,qy,qz)
 
@@ -43,16 +50,8 @@ X_MIN, X_MAX = 0.3, 0.55
 Y_MIN, Y_MAX = -0.3, 0.3
 CUBE_Z = 0.02
 
-
-def build_geom_to_label(model):
-    lut = np.zeros(model.ngeom, dtype=np.uint8)
-    for gid in range(model.ngeom):
-        name = model.geom(gid).name
-        if name.startswith('object_') and not name.startswith('target_object_'):
-            lut[gid] = LABEL_CUBE
-        elif name.startswith('ur5e/'):
-            lut[gid] = LABEL_ARM
-    return lut
+MODES = ('idle', 'walk', 'impulse', 'slide', 'spin')
+MODE_PROBS = (0.25, 0.25, 0.20, 0.15, 0.15)
 
 
 def yaw_to_quat(yaw):
@@ -60,30 +59,103 @@ def yaw_to_quat(yaw):
     return np.array([c, 0.0, 0.0, s])
 
 
-def sample_cube_trajectory(T, rng, speed=0.003, yaw_speed=0.01):
-    """Smooth random walk of the cube on the table."""
-    xy = np.empty((T, 2))
-    vel = np.zeros(2)
-    yaw_arr = np.empty(T)
-    yaw_vel = 0.0
+def sample_kick_direction(xy, rng, wall_margin=0.08, wall_cone=np.deg2rad(30)):
+    """Random direction, re-sampled if it points at a nearby wall."""
+    # Outward normals of walls the cube is close to.
+    walls = []
+    if xy[0] - X_MIN < wall_margin:
+        walls.append(np.array([-1.0, 0.0]))
+    if X_MAX - xy[0] < wall_margin:
+        walls.append(np.array([1.0, 0.0]))
+    if xy[1] - Y_MIN < wall_margin:
+        walls.append(np.array([0.0, -1.0]))
+    if Y_MAX - xy[1] < wall_margin:
+        walls.append(np.array([0.0, 1.0]))
+    for _ in range(20):
+        theta = rng.uniform(-np.pi, np.pi)
+        d = np.array([np.cos(theta), np.sin(theta)])
+        if all(np.dot(d, w) < np.cos(wall_cone) for w in walls):
+            return d
+    return d
 
+
+def gen_idle(xy, vel, yaw_vel, rng):
+    for _ in range(rng.integers(40, 151)):
+        yield np.zeros(2), 0.0
+
+
+def gen_walk(xy, vel, yaw_vel, rng, speed=0.003, yaw_speed=0.01, damping=0.9):
+    for _ in range(rng.integers(60, 201)):
+        vel = damping * vel + rng.normal(0, speed, size=2)
+        yaw_vel = damping * yaw_vel + rng.normal(0, yaw_speed)
+        yield vel, yaw_vel
+
+
+def gen_impulse(xy, vel, yaw_vel, rng):
+    """Push-and-release: idle prelude, velocity kick, friction decay to rest."""
+    for _ in range(rng.integers(10, 31)):
+        yield np.zeros(2), 0.0
+    vel = sample_kick_direction(xy, rng) * rng.uniform(0.012, 0.030)
+    yaw_vel = rng.uniform(-0.08, 0.08) if rng.random() < 0.5 else 0.0
+    mu = rng.uniform(0.90, 0.96)
+    while np.linalg.norm(vel) > 3e-4:
+        yield vel, yaw_vel
+        vel = mu * vel
+        yaw_vel = mu * yaw_vel
+
+
+def gen_slide(xy, vel, yaw_vel, rng):
+    """Straight line, linear deceleration to rest."""
+    d = sample_kick_direction(xy, rng)
+    v0 = rng.uniform(0.006, 0.018)
+    duration = rng.integers(40, 121)
+    for t in range(duration):
+        yield d * v0 * (1 - t / duration), 0.0
+
+
+def gen_spin(xy, vel, yaw_vel, rng):
+    """Rotate in place."""
+    yaw_vel = rng.uniform(0.03, 0.12) * rng.choice([-1, 1])
+    mu = 0.97 if rng.random() < 0.5 else 1.0
+    for _ in range(rng.integers(30, 101)):
+        yield np.zeros(2), yaw_vel
+        yaw_vel = mu * yaw_vel
+
+
+MODE_GENERATORS = {
+    'idle': gen_idle,
+    'walk': gen_walk,
+    'impulse': gen_impulse,
+    'slide': gen_slide,
+    'spin': gen_spin,
+}
+
+
+def sample_cube_trajectory(T, rng, mode_probs=MODE_PROBS):
+    """Scripted cube trajectory composed of randomly sampled motion segments."""
+    xy = np.empty((T, 2))
+    yaw_arr = np.empty(T)
     xy[0] = np.array([rng.uniform(X_MIN, X_MAX), rng.uniform(Y_MIN, Y_MAX)])
     yaw_arr[0] = rng.uniform(-np.pi, np.pi)
 
-    damping = 0.9
-    for t in range(1, T):
-        vel = damping * vel + rng.normal(0, speed, size=2)
-        new_xy = xy[t - 1] + vel
-        if new_xy[0] < X_MIN or new_xy[0] > X_MAX:
-            vel[0] *= -1
-            new_xy[0] = np.clip(new_xy[0], X_MIN, X_MAX)
-        if new_xy[1] < Y_MIN or new_xy[1] > Y_MAX:
-            vel[1] *= -1
-            new_xy[1] = np.clip(new_xy[1], Y_MIN, Y_MAX)
-        xy[t] = new_xy
-
-        yaw_vel = damping * yaw_vel + rng.normal(0, yaw_speed)
-        yaw_arr[t] = yaw_arr[t - 1] + yaw_vel
+    vel = np.zeros(2)
+    yaw_vel = 0.0
+    t = 1
+    while t < T:
+        mode = rng.choice(MODES, p=mode_probs)
+        for vel, yaw_vel in MODE_GENERATORS[mode](xy[t - 1], vel, yaw_vel, rng):
+            new_xy = xy[t - 1] + vel
+            if new_xy[0] < X_MIN or new_xy[0] > X_MAX:
+                vel[0] *= -1
+                new_xy[0] = np.clip(new_xy[0], X_MIN, X_MAX)
+            if new_xy[1] < Y_MIN or new_xy[1] > Y_MAX:
+                vel[1] *= -1
+                new_xy[1] = np.clip(new_xy[1], Y_MIN, Y_MAX)
+            xy[t] = new_xy
+            yaw_arr[t] = yaw_arr[t - 1] + yaw_vel
+            t += 1
+            if t == T:
+                break
 
     qpos_cube = np.zeros((T, 7), dtype=np.float64)
     qpos_cube[:, 0] = xy[:, 0]
@@ -136,10 +208,22 @@ def main():
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('--batch', type=int, default=500)
     p.add_argument('--gzip-level', type=int, default=6)
+    p.add_argument('--shadow-class', action='store_true',
+                   help='add shadow as segmentation class 3')
+    p.add_argument('--shadow-tau', type=float, default=4.0,
+                   help='luminance threshold for the shadow mask')
+    p.add_argument('--walk-only', action='store_true',
+                   help='legacy single-mode random walk (no idle/impulse/slide/spin)')
     args = p.parse_args()
+
+    src_path = os.path.abspath(os.path.expanduser(args.src_path))
+    out_path = os.path.abspath(os.path.expanduser(args.out_path))
+    if out_path == src_path or os.path.exists(out_path):
+        p.error(f'refusing to overwrite existing file: {out_path}')
 
     h = w = args.size
     rng = np.random.default_rng(args.seed)
+    mode_probs = (0.0, 1.0, 0.0, 0.0, 0.0) if args.walk_only else MODE_PROBS
 
     env = CubeEnv(
         env_type='single', ob_type='pixels', width=w, height=h,
@@ -148,9 +232,10 @@ def main():
     )
     env.reset()
     env._model.vis.quality.offsamples = 0
+    saved_castshadow = env._model.light_castshadow.copy()
     lut = build_geom_to_label(env._model)
 
-    with h5py.File(args.src_path, 'r') as fsrc:
+    with h5py.File(src_path, 'r') as fsrc:
         src_ep_offset = fsrc['ep_offset'][:]
         src_ep_len = fsrc['ep_len'][:]
         src_n_eps = len(src_ep_len)
@@ -165,7 +250,7 @@ def main():
 
         print(f'Generating {args.num_episodes} episodes, {n_total} total frames @ {h}x{w}')
 
-        with h5py.File(args.out_path, 'w') as fout:
+        with h5py.File(out_path, 'w') as fout:
             chunk_px = (min(args.batch, 64), h, w, 3)
             chunk_seg = (min(args.batch, 64), h, w)
 
@@ -215,7 +300,7 @@ def main():
                 arm_qpos = fsrc['qpos'][idxs][:, :CUBE_QPOS_START]
                 arm_qvel = fsrc['qvel'][idxs][:, :CUBE_QPOS_START]
 
-                scripted_cube = sample_cube_trajectory(T, rng)
+                scripted_cube = sample_cube_trajectory(T, rng, mode_probs=mode_probs)
                 # Use deltas between consecutive scripted frames and integrate
                 # from the previous *resolved* cube position.  That way a push
                 # from the arm sticks instead of being undone next frame.
@@ -257,12 +342,15 @@ def main():
                     qvel_buf[buf_idx] = env._data.qvel
 
                     raw = env.render(segmentation=True)
-                    geom_ids = np.clip(raw[:, :, 0], -1, len(lut) - 1)
-                    mask = np.where(geom_ids >= 0, lut[geom_ids], LABEL_BG)
-                    cube_dilated = binary_dilation(mask == LABEL_CUBE)
-                    mask[(mask == LABEL_ARM) & cube_dilated] = LABEL_CUBE
+                    mask = seg_from_render(raw, lut)
+                    rgb = env.render()
+                    if args.shadow_class:
+                        env._model.light_castshadow[:] = 0
+                        rgb_ns = env.render()
+                        env._model.light_castshadow[:] = saved_castshadow
+                        mask = add_shadow_class(mask, rgb, rgb_ns, tau=args.shadow_tau)
 
-                    px_buf[buf_idx] = env.render()
+                    px_buf[buf_idx] = rgb
                     seg_buf[buf_idx] = mask
 
                     buf_idx += 1
