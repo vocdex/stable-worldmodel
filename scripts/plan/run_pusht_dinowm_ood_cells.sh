@@ -46,6 +46,8 @@ CELLS=(
   "bg_natural_static|{variation:[background.texture_id],variation_values:{background.texture_id:1}}"
   "bg_video_dynamic|{variation:[background.texture_id],variation_values:{background.texture_id:6}}"
   "bg_video_camouflage|{variation:[background.texture_id],variation_values:{background.texture_id:8}}"
+  "goal_marker_removed|{variation:[rendering.render_goal],variation_values:{rendering.render_goal:0}}"
+  "distractor_tee|{variation:[distractor.shape],variation_values:{distractor.shape:3}}"
 )
 
 BLIND_TAG=$([ "$BLIND" = 1 ] && echo "_blind" || echo "")
