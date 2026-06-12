@@ -49,7 +49,9 @@ CELLS=(
   "goal_marker_removed|{variation:[rendering.render_goal],variation_values:{rendering.render_goal:0}}"
   "distractor_tee|{variation:[distractor.shape],variation_values:{distractor.shape:3}}"
   "distractor_static_orange|{variation:[distractor.motion],variation_values:{distractor.motion:[0,20]}}"
-  "distractor_static_square|{variation:[distractor.shape,distractor.color,distractor.scale,distractor.position],variation_values:{distractor.shape:0,distractor.color:[255,0,255],distractor.scale:25,distractor.position:[80,80]}}"
+  # distractor_static_square CUT (2026-06-12): the shape axis is already pinned
+  # by May same-ckpt data (gray/magenta SQUARE cells) + the binding metric;
+  # re-running it under this protocol confirms nothing decision-relevant.
 )
 
 BLIND_TAG=$([ "$BLIND" = 1 ] && echo "_blind" || echo "")
