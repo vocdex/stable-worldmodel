@@ -167,3 +167,13 @@ def test_default_distractor_shape_is_star():
     default = render_shape(2)
     star = render_shape(2)
     assert np.array_equal(default, star)
+
+
+def test_distractor_tee_l_plus_shapes_render():
+    """Shapes 3-5 (tee/L/plus) mimic task-object geometry for binding studies."""
+    tee, ell, plus = render_shape(3), render_shape(4), render_shape(5)
+    star = render_shape(2)
+    for name, frame in [('tee', tee), ('L', ell), ('plus', plus)]:
+        assert mad(frame, star) > 0.05, f'{name} renders like the star'
+    assert mad(tee, ell) > 0.05
+    assert mad(tee, plus) > 0.05

@@ -28,8 +28,10 @@ cells with hard argmax slot overlays for VideoSAUR + SC-DINOv3-256
    so start/goal frames reflect the cell. `amplitude=0` = legacy static.
 
 2. **`distractor.shape`** — Discrete: 0=square (legacy), 1=triangle,
-   2=**star (default)**, and the default distractor color is now dark
-   orange. Both chosen so the distractor resembles neither the agent (blue
+   2=**star (default)**, 3=tee, 4=L, 5=plus (tee/L/plus reuse the task-object
+   geometry for slot-binding studies — compact blobs bind to the agent slot
+   regardless of color, so shape similarity needs its own axis), and the
+   default distractor color is now dark orange. Both chosen so the distractor resembles neither the agent (blue
    disk) nor the block (slate-gray T): if a slot model still misbinds it
    into a task slot, that is a genuine binding failure, not an artifact of
    look-alike shapes. The legacy gray square is reproducible with

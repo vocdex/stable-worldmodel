@@ -234,11 +234,13 @@ class PushT(gym.Env):
                             init_value=np.array([0.0, 40.0]),
                             shape=(2,), dtype=np.float64,
                         ),
-                        # 0=square (legacy), 1=triangle, 2=star (default).
-                        # The star (two overlapping triangles) is visually
-                        # distinct from both the agent disk and the T block,
-                        # so slot models cannot trivially bind it to either.
-                        'shape': swm_spaces.Discrete(3, init_value=2),
+                        # 0=square (legacy), 1=triangle, 2=star (default),
+                        # 3=tee, 4=L, 5=plus. The star (two overlapping
+                        # triangles) is visually distinct from both the agent
+                        # disk and the T block; tee/L/plus mimic task-object
+                        # geometry for slot-binding studies (compact blobs
+                        # bind to the agent slot regardless of color).
+                        'shape': swm_spaces.Discrete(6, init_value=2),
                     }
                 ),
             },
@@ -786,6 +788,25 @@ class PushT(gym.Env):
                 vert_sets = [[(-s, -s), (-s, s), (s, s), (s, -s)]]
             elif kind == 1:  # triangle
                 vert_sets = [[(0, -s), (s, s), (-s, s)]]
+            elif kind == 3:  # tee (same geometry as add_tee, centered)
+                vert_sets = [
+                    [(-2 * s, -s), (2 * s, -s), (2 * s, 0), (-2 * s, 0)],
+                    [(-s / 2, 0), (-s / 2, 2 * s), (s / 2, 2 * s), (s / 2, 0)],
+                ]
+            elif kind == 4:  # L (same geometry as add_L)
+                vert_sets = [
+                    [(0, 0), (0, 2 * s), (s, 2 * s), (s, 0)],
+                    [(0, 0), (2 * s, 0), (2 * s, -s), (0, -s)],
+                ]
+            elif kind == 5:  # plus (same geometry as add_plus)
+                vert_sets = [
+                    [(-1.5 * s, 0.5 * s), (1.5 * s, 0.5 * s),
+                     (1.5 * s, -0.5 * s), (-1.5 * s, -0.5 * s)],
+                    [(-s / 2, 0.5 * s), (-s / 2, 1.5 * s),
+                     (s / 2, 1.5 * s), (s / 2, 0.5 * s)],
+                    [(-s / 2, -0.5 * s), (-s / 2, -1.5 * s),
+                     (s / 2, -1.5 * s), (s / 2, -0.5 * s)],
+                ]
             else:  # star: two overlapping triangles (pymunk polys are convex)
                 vert_sets = [
                     [(0, -s), (0.87 * s, 0.5 * s), (-0.87 * s, 0.5 * s)],
