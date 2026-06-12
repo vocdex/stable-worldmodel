@@ -189,6 +189,33 @@ Caveats:
 - `agent.color` (cube) and `block.scale` (PushT) were silent no-ops before
   commit `a1437f7`; matrices run before it are stale for those cells.
 
+## Current cube results (2026-06-12, fixed eval, seeds 0/1/2)
+
+Figures: `cjepa/experiments/presentations/ood_cube.{png,pdf}` (absolute SR,
+3-way) and `ood_cube_deltas.{png,pdf}` (drop vs each model's own baseline).
+Data: `cjepa/.../cube_ood_cem300_train/runs/dinowm_cube_fixed_seeds012_2026-06-12.csv`;
+plot scripts `plot_ood_3way_models.py` / `plot_ood_deltas.py` in the same dir.
+
+| factor | SC-WM | DINO-WM | LeWM |  | ΔSC | ΔDINO | ΔLeWM |
+|---|---|---|---|---|---|---|---|
+| in-distribution | 72.7 | 74.0 | 66.7 | | — | — | — |
+| cube.color | 70.9 | 64.7 | 64.7 | | −1.8 | −9.3 | −2.0 |
+| cube.scale | 68.0 | 63.6 | 63.7 | | −4.7 | −8.7 | −3.0 |
+| agent.color | 69.3 | 68.7 | 61.7 | | −3.3 | −5.3 | −5.0 |
+| background.color | 61.7 | 63.3 | 42.7 | | −11.0 | −10.7 | −24.0 |
+| camera.angle_delta | 60.9 | 62.0 | 48.0 | | −11.8 | −12.0 | −18.7 |
+| light.intensity | 70.7 | 66.7 | 59.3 | | −2.0 | −7.3 | −7.3 |
+
+Reading: absolute SRs tie between SC and DINO-WM (DINO's higher baseline
+masks its larger relative drops, mean −8.9pp vs SC's −5.8pp). The deltas are
+where the architectures differ: SC is near-flat on object-level appearance
+(scale-separation) but takes the same scene-level hit as DINO-WM; LeWM
+collapses on scene-level. Earlier DINO-WM cube numbers (uniform 28–40pp
+drops) were an artifact of the goal-frame bug fixed in `1f552ef`; seed 42
+alone also inflated DINO-WM by 3–9pp vs the seeds-0/1/2 protocol. Known
+gaps: seed-0 `cube_size_small` (SLURM-killed; `SEED=0 sbatch --array=4`)
+and the `floor_natural_static` cell (not yet run).
+
 ## Trust verification
 
 Every link of the chain above is pinned by atomic tests in
