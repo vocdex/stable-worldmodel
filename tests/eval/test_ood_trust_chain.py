@@ -65,6 +65,13 @@ BG_TEXTURE = {
     'variation_values': {'background.texture_id': 1},
 }
 
+# object-removal cell: hide the green goal-marker T (success stays numerical,
+# so this is a purely visual removal of trained-on content)
+GOAL_REMOVED = {
+    'variation': ['rendering.render_goal'],
+    'variation_values': {'rendering.render_goal': 0},
+}
+
 PUSHT_CALLABLES = [
     {'method': '_set_state', 'args': {'state': {'value': 'state'}}},
     {
@@ -361,8 +368,8 @@ def test_t2_start_frame_matches_h5_start_under_override(pusht_world, pusht_datas
 
 @pytest.mark.parametrize(
     'overrides',
-    [BLOCK_RED, DISTRACTOR_MOVING, BG_TEXTURE],
-    ids=['block_red', 'distractor_moving', 'bg_texture'],
+    [BLOCK_RED, DISTRACTOR_MOVING, BG_TEXTURE, GOAL_REMOVED],
+    ids=['block_red', 'distractor_moving', 'bg_texture', 'goal_removed'],
 )
 def test_t1_t2_planner_frames_match_h5_states(pusht_world, pusht_dataset, overrides):
     """T1+T2 for every override cell used in the OOD matrix (extend the
@@ -401,6 +408,33 @@ def test_t4_success_target_matches_h5_goal_state(pusht_world, pusht_dataset, ove
         expected = h5_row(h5, 'state', ep, goal_row(start, GOAL_OFFSET))
         actual = pusht_world.envs.envs[i].unwrapped.goal_state
         assert np.allclose(np.asarray(actual), expected, atol=1e-6)
+
+
+def test_goal_removed_cell_drops_only_the_green_marker(pusht_world, pusht_dataset):
+    """Pinned guarantees of the goal_marker_removed cell: the planner's start
+    and goal frames lose exactly the green goal-marker tint (a green-dominant
+    region vs the clean run), while the numerical success target is identical
+    to the clean run's."""
+    dataset, h5 = pusht_dataset
+    spy_clean, _ = run_pusht(pusht_world, dataset, overrides=None)
+    clean_targets = [
+        np.asarray(env.unwrapped.goal_state).copy()
+        for env in pusht_world.envs.envs
+    ]
+    spy_rm, _ = run_pusht(pusht_world, dataset, overrides=GOAL_REMOVED)
+    for key in ('pixels', 'goal'):
+        clean = spy_clean.calls[0][key][:, -1].astype(int)
+        removed = spy_rm.calls[0][key][:, -1].astype(int)
+        changed = np.abs(clean - removed).sum(-1) > 0
+        assert changed.any(), f'{key} frames unchanged — marker not removed'
+        # what disappeared must be the green-tinted marker region
+        px = clean[changed]
+        assert px[:, 1].mean() > px[:, 0].mean(), (
+            f'removed {key} region is not green-dominant — wrong content removed'
+        )
+    for i, target in enumerate(clean_targets):
+        actual = pusht_world.envs.envs[i].unwrapped.goal_state
+        assert np.allclose(np.asarray(actual), target, atol=1e-6)
 
 
 # --------------------------------------------------------------------------
