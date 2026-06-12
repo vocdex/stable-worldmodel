@@ -7,17 +7,22 @@
 # docs/dynamic_ood_cells.md + the legacy static-distractor cell for the
 # static-vs-moving ablation. Idempotent via done.flags.
 #
+# CELL-MAJOR ordering (2026-06-12): all seeds of a cell run before the next
+# cell starts, so each cell's verdict lands as early as possible. Set
+# SEEDS="0 1 2" (default) or legacy single-seed SEED=1.
+#
 # The pusht_dinowm config no longer bakes a variation_overrides default
 # (it was redundant and hydra struct-mode merge broke `+` appends), so
 # cells append their override with `+eval.variation_overrides=`.
 #
 # Usage:
-#   SEED=0 bash scripts/plan/run_pusht_dinowm_ood_cells.sh
-#   SEED=1 NUM_EVAL=50 bash scripts/plan/run_pusht_dinowm_ood_cells.sh
+#   bash scripts/plan/run_pusht_dinowm_ood_cells.sh             # seeds 0 1 2
+#   SEEDS="0 1" NUM_EVAL=50 bash scripts/plan/run_pusht_dinowm_ood_cells.sh
+#   SEED=2 bash scripts/plan/run_pusht_dinowm_ood_cells.sh      # one seed
 
 set -u
 
-SEED=${SEED:-0}
+SEEDS=${SEEDS:-${SEED:-"0 1 2"}}
 NUM_EVAL=${NUM_EVAL:-50}
 NUM_SAMPLES=${NUM_SAMPLES:-300}
 BATCH_SIZE=${BATCH_SIZE:-4}
@@ -55,19 +60,19 @@ CELLS=(
 )
 
 BLIND_TAG=$([ "$BLIND" = 1 ] && echo "_blind" || echo "")
-RESULTS_DIR=checkpoints/dino_wm_legacy_pusht/dyn_cells_a${ALPHA}${BLIND_TAG}_n${NUM_SAMPLES}_eps${NUM_EVAL}_s${SEED}
-CSV="$RESULTS_DIR/dyn_cells.csv"
-mkdir -p "$RESULTS_DIR"
 
 for ENTRY in "${CELLS[@]}"; do
+  for SEED in $SEEDS; do
     LABEL="${ENTRY%%|*}"
     OVERRIDE_VALUE="${ENTRY##*|}"
+    RESULTS_DIR=checkpoints/dino_wm_legacy_pusht/dyn_cells_a${ALPHA}${BLIND_TAG}_n${NUM_SAMPLES}_eps${NUM_EVAL}_s${SEED}
+    CSV="$RESULTS_DIR/dyn_cells.csv"
     CELL_DIR="$RESULTS_DIR/cells/$LABEL"
     CELL_LOG="$CELL_DIR/eval.log"
     mkdir -p "$CELL_DIR"
 
     if [ -f "$CELL_DIR/done.flag" ]; then
-        echo "== $LABEL: done, skipping"
+        echo "== $LABEL s$SEED: done, skipping"
         continue
     fi
     rm -f "$CELL_DIR/failed.flag"
@@ -87,7 +92,7 @@ for ENTRY in "${CELLS[@]}"; do
         HYDRA_OVERRIDES+=("+eval.variation_overrides=${OVERRIDE_VALUE}")
     fi
 
-    echo "== $LABEL: launching ($(date))"
+    echo "== $LABEL s$SEED: launching ($(date))"
     START_TIME=$(date +%s)
     uv run python scripts/plan/eval_wm.py "${HYDRA_OVERRIDES[@]}" 2>&1 | tee "$CELL_LOG"
     EXIT_CODE=${PIPESTATUS[0]}
@@ -108,7 +113,8 @@ for ENTRY in "${CELLS[@]}"; do
         echo "label,SR,elapsed_s" > "$CSV"
     fi
     printf '%s,%s,%s\n' "$LABEL" "$SR" "$ELAPSED" >> "$CSV"
-    echo "== $LABEL: SR=$SR elapsed=${ELAPSED}s"
+    echo "== $LABEL s$SEED: SR=$SR elapsed=${ELAPSED}s"
+  done
 done
 
-echo "All cells done. Results: $CSV"
+echo "All cells done."
