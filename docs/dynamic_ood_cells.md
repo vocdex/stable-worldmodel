@@ -84,6 +84,8 @@ launcher:
 | `bg_video_dynamic`  | PushT | `background.texture_id=6` (DAVIS bear — objects stay discernible) |
 | `bg_video_camouflage` | PushT | `background.texture_id=8` (DAVIS car-roundabout — gray street nearly camouflages the gray T; extra-hard tier) |
 | `floor_natural_static` | Cube | `floor.texture_id=1` |
+| `goal_marker_removed` | PushT | `rendering.render_goal=0` (object REMOVAL: hides the green goal-marker T, which all WMs trained on; success stays numerical and the planner's start+goal frames are consistently marker-free. SC256 precheck: marker owns a dedicated slot; on removal agent/block slots stay intact 30/30 frames) |
+| `distractor_tee` | PushT | `distractor.shape=3` (object ADDITION: block-lookalike tee, orange, defaults otherwise; binds toward the BLOCK slot per the shape-ladder masks) |
 
 (SWM-side launchers: `scripts/cluster/plan_ood/pusht.sh` cells 10–13,
 `scripts/cluster/plan_ood/cube.sh` cell 15.)
