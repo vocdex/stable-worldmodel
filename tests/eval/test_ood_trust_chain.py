@@ -533,6 +533,43 @@ def test_t6_pusht_variation_changes_pixels(leaf):
 
 
 # --------------------------------------------------------------------------
+# rollout videos: per-episode files, verdict in the name, perturbed goal inset
+# --------------------------------------------------------------------------
+
+
+def test_rollout_videos_named_by_verdict_with_perturbed_goal_inset(
+    pusht_world, pusht_dataset, tmp_path
+):
+    import imageio
+
+    dataset, h5 = pusht_dataset
+    spy = SpyPolicy()
+    pusht_world.set_policy(spy)
+    results = pusht_world.evaluate_from_dataset(
+        dataset,
+        episodes_idx=EPISODES_IDX,
+        start_steps=START_STEPS,
+        goal_offset_steps=GOAL_OFFSET,
+        eval_budget=2,
+        callables=deepcopy(PUSHT_CALLABLES),
+        save_video=True,
+        video_path=tmp_path,
+        variation_overrides=deepcopy(BLOCK_RED),
+    )
+    _, expected_goals = independent_pusht_frames(h5, BLOCK_RED)
+    videos = sorted(tmp_path.glob('ep*.mp4'))
+    assert len(videos) == N_ENVS, 'expected one video per episode'
+    for i, path in enumerate(videos):
+        verdict = 'success' if results['episode_successes'][i] else 'fail'
+        assert path.name == f'ep{i:03d}_{verdict}.mp4'
+        frame = imageio.get_reader(path).get_data(0)
+        inset = expected_goals[i][::4, ::4]
+        ih, iw = inset.shape[:2]
+        # top-right inset shows the PERTURBED goal (codec-lossy tolerance)
+        assert mad(frame[:ih, -iw:], inset) < 10.0
+
+
+# --------------------------------------------------------------------------
 # T7 — frames the policy sees track the live (perturbed) env
 # --------------------------------------------------------------------------
 

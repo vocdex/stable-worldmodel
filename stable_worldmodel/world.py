@@ -1171,33 +1171,36 @@ class World:
             float(np.sum(results['episode_successes'])) / n_episodes * 100.0
         )
 
-        # save video if required
+        # save video if required: one video per episode showing the executed
+        # trajectory with the goal inset top-right, success/fail in the name
         if save_video:
             import imageio
 
-            target_len = target_frames.shape[1]
             video_path_obj = Path(video_path)
             video_path_obj.mkdir(parents=True, exist_ok=True)
             for i in range(self.num_envs):
-                out = imageio.get_writer(
-                    video_path_obj / f'rollout_{i}.mp4',
-                    fps=15,
-                    codec='libx264',
-                )
-                # Goal panel: use the planner's ACTUAL goal (snapshotted before
-                # the loop, perturbed under the active variation) rather than the
-                # H5 dataset frame (target_frames[i,-1]), which is unperturbed
-                # and misrepresents what the planner targeted.
+                # Goal inset: the planner's ACTUAL goal (snapshotted before
+                # the loop, perturbed under the active variation) rather than
+                # the H5 dataset frame (target_frames[i,-1]), which is
+                # unperturbed and misrepresents what the planner targeted.
                 if video_goal_frames is not None:
                     goal_img = video_goal_frames[i]
                 else:
                     goal_img = target_frames[i, -1]
-                goals = np.vstack([goal_img, goal_img])
+                inset = goal_img[::4, ::4]
+                ih, iw = inset.shape[:2]
+                verdict = (
+                    'success' if results['episode_successes'][i] else 'fail'
+                )
+                out = imageio.get_writer(
+                    video_path_obj / f'ep{i:03d}_{verdict}.mp4',
+                    fps=15,
+                    codec='libx264',
+                )
                 for t in range(steps_used):
-                    stacked_frame = np.vstack(
-                        [video_frames[i, t], target_frames[i, t % target_len]]
-                    )
-                    frame = np.hstack([stacked_frame, goals])
+                    frame = video_frames[i, t].copy()
+                    frame[: ih + 2, -(iw + 2) :] = 0  # thin border
+                    frame[:ih, -iw:] = inset
                     out.append_data(frame)
                 out.close()
             print(f'Video saved to {video_path_obj}')
