@@ -88,6 +88,21 @@ launcher:
 (SWM-side launchers: `scripts/cluster/plan_ood/pusht.sh` cells 10–13,
 `scripts/cluster/plan_ood/cube.sh` cell 15.)
 
+## DINO-WM reference results (alpha=0, seeds 0-2, 2026-06-12)
+
+| cell | SR (mean ± std) | Δ vs baseline |
+|---|---|---|
+| baseline | 73.3 ± 2.5 | — |
+| distractor_static | 59.3 ± 4.7 | −14.0 |
+| distractor_moving | 54.7 ± 5.0 | −18.7 |
+| bg_natural_static | 2.0 ± 1.6 | −71.3 |
+| bg_video_dynamic | 4.0 ± 0.0 | −69.3 |
+| bg_video_camouflage | 2.7 ± 2.5 | −70.7 |
+
+No proprio in the planning cost (`ALPHA=0`); data + figure in
+`cjepa/experiments/pusht/dynamic_distractors/`. SC/LeWM run instructions for
+the cjepa session: `cjepa/docs/dynamic_cells_run_brief.md`.
+
 ## Running through cjepa
 
 - All three cells run through the existing single-factor runner as-is:
