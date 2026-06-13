@@ -25,7 +25,11 @@ policy: /home/nazirjon/Desktop/dino_wm/checkpoints/outputs/pusht
 dino_wm_src: /home/nazirjon/Desktop/dino_wm
 dino_wm_alpha: 1.0           # paper sweeps {0.1, 1.0}
 dino_wm_blind_proprio: false # true: feed training-mean proprio (no privileged state input)
-dino_wm_rollout_chunk: 64    # CEM batch chunk inside the adapter; lower → less VRAM, slower
+dino_wm_rollout_chunk: 64    # candidates per predictor forward. NOTE: measured no speedup
+                             # from raising this (64/256/512 give identical CEM iter time —
+                             # the bottleneck is CEM/env overhead, not the chunked forward),
+                             # so kept low to minimize VRAM. Only raise if a future model is
+                             # forward-bound.
 # NOTE: action/proprio normalization is handled by SWM's policy + CEM stack
 # (process[k].transform in _prepare_info; CEM samples in standardized space).
 # The adapter must NOT re-normalize — that was the prior 20-30% SR bug.

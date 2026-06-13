@@ -5,9 +5,9 @@
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=0-02:00          # measured ~88 min/cell (50 eps: 2x 16-min CEM + ~55 min env stepping); 2h gives margin
+#SBATCH --time=0-01:30          # n_steps=10 cuts CEM ~3x (~11 min); ~55 min env stepping dominates -> ~66 min/cell, 90 min margin
 #SBATCH --mem=64G
-#SBATCH --array=0-74            # 25 cells x 3 seeds (cell = task%25, seed = task/25)
+#SBATCH --array=0-49            # 25 cells x 2 seeds (cell = task%25, seed = task/25)
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_pusht_dwm_%A_%a.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_pusht_dwm_%A_%a.err
 
@@ -70,7 +70,7 @@ CELLS=(
   "background_color_blue|{variation:[background.color],variation_values:{background.color:[0,0,255]}}"
   "background_color_black|{variation:[background.color],variation_values:{background.color:[0,0,0]}}"
 )
-SEEDS=(0 1 2)
+SEEDS=(0 1)
 
 NUM_CELLS=${#CELLS[@]}
 TOTAL=$(( NUM_CELLS * ${#SEEDS[@]} ))
@@ -98,7 +98,7 @@ export STABLEWM_HOME=$WORK_BIND_DIR
 NUM_EVAL=${NUM_EVAL:-50}
 BATCH_SIZE=${BATCH_SIZE:-10}     # external adapter encodes-once, fits bs=10 at N=300 on 40GB
 NUM_SAMPLES=${NUM_SAMPLES:-300}
-N_STEPS=${N_STEPS:-30}
+N_STEPS=${N_STEPS:-10}
 TOPK=${TOPK:-30}
 ALPHA=${ALPHA:-0.0}              # no proprio cost (visual-only planning cost)
 
