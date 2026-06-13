@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=0-01:00          # 50 eps ~= 38 min (2x 16-min MPC iters); 60 min margin
+#SBATCH --time=0-02:00          # measured ~88 min/cell (50 eps: 2x 16-min CEM + ~55 min env stepping); 2h gives margin
 #SBATCH --mem=64G
 #SBATCH --array=0-74            # 25 cells x 3 seeds (cell = task%25, seed = task/25)
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_pusht_dwm_%A_%a.out
