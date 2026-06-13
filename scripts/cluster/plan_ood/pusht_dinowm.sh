@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --time=0-01:30          # n_steps=10 cuts CEM ~3x (~11 min); ~55 min env stepping dominates -> ~66 min/cell, 90 min margin
 #SBATCH --mem=64G
-#SBATCH --array=0-49            # 25 cells x 2 seeds (cell = task%25, seed = task/25)
+#SBATCH --array=0-49%12         # 25 cells x 2 seeds; %12 caps concurrent tasks at 12 (cluster limit)
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_pusht_dwm_%A_%a.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_ood_pusht_dwm_%A_%a.err
 
