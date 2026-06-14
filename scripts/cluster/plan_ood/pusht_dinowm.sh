@@ -70,7 +70,7 @@ CELLS=(
   "background_color_blue|{variation:[background.color],variation_values:{background.color:[0,0,255]}}"
   "background_color_black|{variation:[background.color],variation_values:{background.color:[0,0,0]}}"
 )
-SEEDS=(0 1)
+read -r -a SEEDS <<< "${SEEDS:-0 1}"   # override e.g. SEEDS=2 for a single extra seed
 
 NUM_CELLS=${#CELLS[@]}
 TOTAL=$(( NUM_CELLS * ${#SEEDS[@]} ))
