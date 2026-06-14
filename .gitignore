@@ -213,6 +213,7 @@ logs/
 **/*.pyc
 !scripts/minerl.sh
 !scripts/cluster/*.sh
+!scripts/cluster/**/*.sh
 
 outputs/
 multirun/
@@ -229,4 +230,5 @@ lightning_logs/
 old_tests/
 results/
 local_scripts/
-*.gifvisualizations/
+*.gif
+visualizations/

@@ -14,13 +14,13 @@ from stable_worldmodel.envs.ogbench import ExpertPolicy
 def run(cfg: DictConfig):
     """Run parallel data collection script"""
 
+    env_type = cfg.get('env_type', 'single')
     world = swm.World(
         'swm/OGBCube-v0',
         **cfg.world,
-        env_type='single',
-        multiview=True,
-        width=224,
-        height=224,
+        env_type=env_type,
+        width=256,
+        height=256,
         visualize_info=False,
         terminate_at_goal=False,
         mode='data_collection',
@@ -31,8 +31,9 @@ def run(cfg: DictConfig):
     rng = np.random.default_rng(cfg.seed)
     world.set_policy(ExpertPolicy())
 
+    dataset_name = f'ogbench/cube_{env_type}_expert'
     world.record_dataset(
-        'ogbench/cube_single_multiview_expert',
+        dataset_name,
         episodes=cfg.num_traj,
         seed=rng.integers(0, 1_000_000).item(),
         cache_dir=cfg.cache_dir,
