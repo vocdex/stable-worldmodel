@@ -51,6 +51,9 @@ def main():
                    help='only process the first N frames (for smoke tests)')
     p.add_argument('--batch', type=int, default=500,
                    help='frames buffered before flushing to disk')
+    p.add_argument('--env-type', default='single',
+                   choices=['single', 'double', 'triple', 'quadruple', 'octuple'],
+                   help='cube env type (default: single)')
     p.add_argument('--gzip-level', type=int, default=6,
                    help='gzip level for segmentation')
     args = p.parse_args()
@@ -65,7 +68,7 @@ def main():
     h = w = args.size
 
     env = CubeEnv(
-        env_type='single',
+        env_type=args.env_type,
         ob_type='pixels',
         width=w,
         height=h,
@@ -81,7 +84,9 @@ def main():
     saved_castshadow = env._model.light_castshadow.copy()
     if args.no_shadow:
         env._model.light_castshadow[:] = 0
-    lut = build_geom_to_label(env._model)
+    lut, n_cubes, label_arm, label_shadow = build_geom_to_label(env._model)
+    print(f'env_type={args.env_type}, n_cubes={n_cubes}, '
+          f'label_arm={label_arm}, label_shadow={label_shadow}')
 
     chunk_px = (min(args.batch, 64), h, w, 3)
     chunk_seg = (min(args.batch, 64), h, w)
@@ -132,13 +137,13 @@ def main():
             env.set_state(fin['qpos'][i], fin['qvel'][i])
 
             raw = env.render(segmentation=True)
-            mask = seg_from_render(raw, lut)
+            mask = seg_from_render(raw, lut, n_cubes, label_arm)
             rgb = env.render()
             if args.shadow_class:
                 env._model.light_castshadow[:] = 0
                 rgb_ns = env.render()
                 env._model.light_castshadow[:] = saved_castshadow
-                mask = add_shadow_class(mask, rgb, rgb_ns, tau=args.shadow_tau)
+                mask = add_shadow_class(mask, rgb, rgb_ns, label_shadow, tau=args.shadow_tau)
 
             px_buf[buf_idx] = rgb
             seg_buf[buf_idx] = mask
