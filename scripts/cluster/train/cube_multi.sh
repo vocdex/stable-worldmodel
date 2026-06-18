@@ -57,7 +57,7 @@ echo ""
 
 # Raw datasets: $WORK_DIR/datasets/ogbench/cube_*_expert.h5
 # Features out: $WORK_DIR/datasets/cube_*_expert_features.h5  (same level as cube_single)
-SRC="$WORK_DIR/datasets/ogbench/cube_${ENV_TYPE}_expert.h5"
+SRC="$WORK_DIR/datasets/cube_${ENV_TYPE}_expert.h5"
 DST="$WORK_DIR/datasets/cube_${ENV_TYPE}_expert_features.h5"
 
 if [ ! -f "$SRC" ]; then
