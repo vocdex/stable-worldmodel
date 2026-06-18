@@ -3,7 +3,8 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12
 #SBATCH --nodes=1
-#SBATCH --partition=cpu-galvani
+#SBATCH --partition=2080-galvani
+#SBATCH --gres=gpu:1
 #SBATCH --time=0-03:00          # plan_oracle, 224²; ~1-2h each with 3500/2500 eps
 #SBATCH --mem=48G
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/collect_cube_%x_%j.out
