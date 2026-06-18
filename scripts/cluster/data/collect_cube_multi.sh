@@ -48,8 +48,6 @@ export PYTHONUNBUFFERED=1
 WORK_DIR=/mnt/lustre/work/martius/mot956/stable-worldmodel
 cd "$WORK_DIR"
 
-uv sync --extra env
-
 OUT_H5="$HOME/.stable_worldmodel/datasets/ogbench/cube_${ENV_TYPE}_expert.h5"
 if [ -f "$OUT_H5" ]; then
     echo "ERROR: output already exists: $OUT_H5 — refusing to overwrite."
@@ -60,7 +58,7 @@ mkdir -p "$WORK_DIR/logs"
 
 echo "Collecting cube_${ENV_TYPE}_expert: ${NUM_TRAJ} episodes × ${MAX_STEPS} steps × 10 envs → $OUT_H5"
 
-srun --kill-on-bad-exit=1 --unbuffered --chdir="$WORK_DIR" "$WORK_DIR/.venv/bin/python" scripts/data/collect_cube.py \
+uv run python scripts/data/collect_cube.py \
     env_type="$ENV_TYPE" \
     num_traj=$NUM_TRAJ \
     cache_dir="$HOME/.stable_worldmodel" \
