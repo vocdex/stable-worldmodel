@@ -337,7 +337,7 @@ class World:
         h5_kwargs = {
             'name': str(path),
             'mode': 'a' if path.exists() else 'w',
-            'libver': 'latest',
+            'libver': ('v110', 'v114'),
         }
 
         if not path.exists():  # creation only args

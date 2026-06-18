@@ -4,28 +4,35 @@
 #SBATCH --cpus-per-task=12
 #SBATCH --nodes=1
 #SBATCH --partition=cpu-galvani
-#SBATCH --time=0-06:00          # 2500 eps × 200 steps × 10 envs ≈ 2-4h per count
+#SBATCH --time=0-03:00          # plan_oracle, 224²; ~1-2h each with 3500/2500 eps
 #SBATCH --mem=48G
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/collect_cube_%x_%j.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/collect_cube_%x_%j.err
 
 # Collect expert demonstrations for one OGBench-Cube env_type.
-# Run as a SLURM array (one job per count) from the stable-worldmodel root:
+# Uses plan_oracle (smooth trajectories, matches single-cube action distribution).
+# Episode steps scale with cube count (N×200); episode counts chosen for ~2M frames each:
+#   triple:    3500 eps × 601 steps ≈ 2.1M frames
+#   quadruple: 2500 eps × 801 steps ≈ 2.0M frames
 #
 #   cd /mnt/lustre/work/martius/mot956/stable-worldmodel
-#   sbatch --job-name=collect_double --export=ENV_TYPE=double scripts/cluster/data/collect_cube_multi.sh
-#   sbatch --job-name=collect_triple --export=ENV_TYPE=triple scripts/cluster/data/collect_cube_multi.sh
+#   sbatch --job-name=collect_triple    --export=ENV_TYPE=triple    scripts/cluster/data/collect_cube_multi.sh
 #   sbatch --job-name=collect_quadruple --export=ENV_TYPE=quadruple scripts/cluster/data/collect_cube_multi.sh
 #
 # Output: ~/.stable_worldmodel/datasets/ogbench/cube_{env_type}_expert.h5
-# Config: 200 steps/ep, 256x256, num_envs=10, 2500 episodes, visualize_info=False.
 
 ENV_TYPE=${ENV_TYPE:-double}
+
+case "$ENV_TYPE" in
+    triple)    MAX_STEPS=600; NUM_TRAJ=3500 ;;
+    quadruple) MAX_STEPS=800; NUM_TRAJ=2500 ;;
+    *)         MAX_STEPS=200; NUM_TRAJ=5000 ;;
+esac
 
 echo "=================================================="
 echo "SLURM Job: $SLURM_JOB_NAME ($SLURM_JOB_ID)"
 echo "Node: $SLURM_NODELIST  Partition: $SLURM_JOB_PARTITION"
-echo "ENV_TYPE: $ENV_TYPE"
+echo "ENV_TYPE: $ENV_TYPE  MAX_STEPS: $MAX_STEPS"
 echo "Start: $(date)"
 echo "=================================================="
 
@@ -50,15 +57,16 @@ fi
 mkdir -p "$HOME/.stable_worldmodel/datasets/ogbench"
 mkdir -p "$WORK_DIR/logs"
 
-echo "Collecting cube_${ENV_TYPE}_expert: 2500 episodes × 200 steps × 10 envs → $OUT_H5"
+echo "Collecting cube_${ENV_TYPE}_expert: ${NUM_TRAJ} episodes × ${MAX_STEPS} steps × 10 envs → $OUT_H5"
 
 srun --kill-on-bad-exit=1 --unbuffered uv run python scripts/data/collect_cube.py \
     env_type="$ENV_TYPE" \
-    num_traj=2500 \
+    num_traj=$NUM_TRAJ \
     cache_dir="$HOME/.stable_worldmodel" \
     world.num_envs=10 \
-    world.max_episode_steps=200 \
-    world.image_shape=[256,256]
+    world.max_episode_steps=$MAX_STEPS \
+    world.image_shape=[224,224] \
+    ++policy_type=plan_oracle
 
 EXIT_CODE=$?
 echo "=================================================="

@@ -16,5 +16,6 @@ world:
 
 seed: 3072
 num_traj: 10000
+policy_type: markov_oracle
 
 options: null
