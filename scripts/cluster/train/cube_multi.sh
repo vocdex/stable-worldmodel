@@ -92,7 +92,7 @@ uv run python scripts/train/prejepa.py \
     wandb.enable=true \
     wandb.entity=vocdex \
     wandb.project=swm-cube \
-    "output_model_name=cube_${ENV_TYPE}"
+    "output_model_name=dino_wm_${ENV_TYPE}"
 
 EXIT_CODE=$?
 
