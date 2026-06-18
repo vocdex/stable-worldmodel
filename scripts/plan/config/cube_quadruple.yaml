@@ -1,0 +1,60 @@
+defaults:
+  - cube
+  - _self_
+
+world:
+  env_type: quadruple
+  max_episode_steps: 1000
+
+eval:
+  eval_budget: 200
+  dataset_name: cube_quadruple_expert
+  callables:
+    - method: set_state
+      args:
+        qpos:
+          value: qpos
+        qvel:
+          value: qvel
+    - method: set_target_pos
+      args:
+        cube_id:
+          value: 0
+          in_dataset: False
+        target_pos:
+          value: goal_privileged_block_0_pos
+        target_quat:
+          value: goal_privileged_block_0_quat
+    - method: set_target_pos
+      args:
+        cube_id:
+          value: 1
+          in_dataset: False
+        target_pos:
+          value: goal_privileged_block_1_pos
+        target_quat:
+          value: goal_privileged_block_1_quat
+    - method: set_target_pos
+      args:
+        cube_id:
+          value: 2
+          in_dataset: False
+        target_pos:
+          value: goal_privileged_block_2_pos
+        target_quat:
+          value: goal_privileged_block_2_quat
+    - method: set_target_pos
+      args:
+        cube_id:
+          value: 3
+          in_dataset: False
+        target_pos:
+          value: goal_privileged_block_3_pos
+        target_quat:
+          value: goal_privileged_block_3_quat
+    - method: render_goal_scene
+      args:
+        qpos:
+          value: goal_qpos
+        qvel:
+          value: goal_qvel
