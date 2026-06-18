@@ -1037,11 +1037,14 @@ class World:
                     init_step['goal_state'][i], goal_step['goal_state'][i]
                 ), 'Goal state info does not match at reset'
 
+        n_episodes = len(episodes_idx)
         results: dict = {
             'success_rate': 0.0,
-            'episode_successes': np.zeros(len(episodes_idx)),
+            'episode_successes': np.zeros(n_episodes),
             'seeds': seeds,
         }
+        # per-cube tracking: populated once we see cube_successes in infos
+        _per_cube: np.ndarray | None = None
 
         # expend all data to the right shape (x, y, (original_shape))
         shape_prefix = self.infos['pixels'].shape[:2]
@@ -1150,26 +1153,31 @@ class World:
             results['episode_successes'] = np.logical_or(
                 results['episode_successes'], self.terminateds
             )
+            # per-cube successes: OR across steps (was cube k ever at goal?)
+            if 'privileged/cube_successes' in self.infos:
+                cs = self.infos['privileged/cube_successes'][:, -1]  # (n_envs, n_cubes)
+                if _per_cube is None:
+                    _per_cube = np.zeros((n_episodes, cs.shape[-1]), dtype=bool)
+                _per_cube |= cs
             # for auto-reset
             self.envs.unwrapped._autoreset_envs = np.zeros((self.num_envs,))
 
             if stop_on_success and results['episode_successes'].all():
-                # All envs in this batch have reached the goal at least once;
-                # no further env steps will change the success metric. Stop
-                # so the video reflects the actual planning trajectory rather
-                # than post-success drift. Tail of `video_frames` past
-                # `steps_used` is left uninitialized — capped at write time.
                 steps_used = i + 1
                 break
 
         video_frames[:, steps_used - 1] = self.infos['pixels'][:, -1]
 
-        n_episodes = len(episodes_idx)
-
         # compute success rate
         results['success_rate'] = (
             float(np.sum(results['episode_successes'])) / n_episodes * 100.0
         )
+        if _per_cube is not None:
+            n_cubes = _per_cube.shape[1]
+            results['per_cube_successes'] = _per_cube
+            for k in range(1, n_cubes + 1):
+                sr_ge_k = float((_per_cube.sum(axis=1) >= k).sum()) / n_episodes * 100.0
+                results[f'SR_ge{k}'] = sr_ge_k
 
         # save video if required: one video per episode showing the executed
         # trajectory with the goal inset top-right, success/fail in the name

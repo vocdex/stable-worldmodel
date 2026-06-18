@@ -255,6 +255,9 @@ def run(cfg: DictConfig):
     end_time = time.time()
 
     print(metrics)
+    sr_ge_keys = sorted(k for k in metrics if k.startswith('SR_ge'))
+    if sr_ge_keys:
+        print('Per-cube SR: ' + '  '.join(f"{k}={metrics[k]:.1f}%" for k in sr_ge_keys))
 
     results_path = results_path / cfg.output.filename
     results_path.parent.mkdir(parents=True, exist_ok=True)
@@ -268,6 +271,8 @@ def run(cfg: DictConfig):
 
         f.write('==== RESULTS ====\n')
         f.write(f'metrics: {metrics}\n')
+        if sr_ge_keys:
+            f.write('per_cube_sr: ' + '  '.join(f"{k}={metrics[k]:.1f}%" for k in sr_ge_keys) + '\n')
         f.write(f'evaluation_time: {end_time - start_time} seconds\n')
 
 

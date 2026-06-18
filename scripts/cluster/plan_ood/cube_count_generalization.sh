@@ -110,15 +110,19 @@ fi
 if [ "$EXIT_CODE" -eq 0 ]; then
     SR=$(grep -oP "'success_rate':\s*\K[0-9.]+" "$CELL_LOG" | tail -1)
     SR=${SR:-NA}
+    PER_CUBE=$(grep "Per-cube SR:" "$CELL_LOG" | tail -1 || true)
     touch "$RESULTS_DIR/done.flag"
     echo "SR=$SR" >> "$RESULTS_DIR/done.flag"
+    [ -n "$PER_CUBE" ] && echo "$PER_CUBE" >> "$RESULTS_DIR/done.flag"
 else
     SR="NA"
+    PER_CUBE=""
     echo "FAIL: exit code $EXIT_CODE"
 fi
 
 echo "=================================================="
 echo "train=$TRAIN_COUNT test=$TEST_COUNT SR=$SR"
+[ -n "$PER_CUBE" ] && echo "$PER_CUBE"
 echo "End: $(date)  exit=$EXIT_CODE"
 echo "=================================================="
 exit "$EXIT_CODE"

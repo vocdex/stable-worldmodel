@@ -1545,6 +1545,8 @@ class CubeEnv(ManipSpaceEnv):
                 ]
             )
 
+        ob_info['privileged/cube_successes'] = np.array(self._compute_successes())
+
         if self._mode == 'data_collection':
             # Target cube info.
             ob_info['privileged/target_task'] = self._target_task
