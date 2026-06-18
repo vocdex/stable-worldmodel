@@ -60,7 +60,7 @@ mkdir -p "$WORK_DIR/logs"
 
 echo "Collecting cube_${ENV_TYPE}_expert: ${NUM_TRAJ} episodes × ${MAX_STEPS} steps × 10 envs → $OUT_H5"
 
-srun --kill-on-bad-exit=1 --unbuffered uv run python scripts/data/collect_cube.py \
+srun --kill-on-bad-exit=1 --unbuffered "$WORK_DIR/.venv/bin/python" scripts/data/collect_cube.py \
     env_type="$ENV_TYPE" \
     num_traj=$NUM_TRAJ \
     cache_dir="$HOME/.stable_worldmodel" \
