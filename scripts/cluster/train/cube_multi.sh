@@ -48,7 +48,6 @@ export PYTHONUNBUFFERED=1
 mkdir -p "$WANDB_DIR" "$HF_HOME" "$TORCH_HOME"
 
 WORK_DIR=/mnt/lustre/work/martius/mot956/stable-worldmodel
-export STABLEWM_HOME=$WORK_DIR
 cd "$WORK_DIR"
 
 uv sync --extra train --extra env
@@ -56,9 +55,15 @@ uv sync --extra train --extra env
 echo "torch check: $(uv run python -c 'import torch; print(torch.__version__, torch.cuda.is_available())')"
 echo ""
 
-DATASETS_DIR="$HOME/.stable_worldmodel/datasets/ogbench"
-SRC="$DATASETS_DIR/cube_${ENV_TYPE}_expert.h5"
-DST="$DATASETS_DIR/cube_${ENV_TYPE}_expert_features.h5"
+# Raw datasets: $WORK_DIR/datasets/ogbench/cube_*_expert.h5
+# Features out: $WORK_DIR/datasets/cube_*_expert_features.h5  (same level as cube_single)
+SRC="$WORK_DIR/datasets/ogbench/cube_${ENV_TYPE}_expert.h5"
+DST="$WORK_DIR/datasets/cube_${ENV_TYPE}_expert_features.h5"
+
+if [ ! -f "$SRC" ]; then
+    echo "ERROR: source dataset not found: $SRC"
+    exit 1
+fi
 
 # --- Feature extraction ---
 if [ -f "$DST" ]; then
@@ -69,7 +74,7 @@ else
         --src "$SRC" \
         --dst "$DST" \
         --batch_size 256 \
-        --num_workers 8
+        --num_workers 8 || exit 1
     echo "Extraction done: $(date)"
 fi
 
@@ -79,7 +84,7 @@ echo "Training PreJEPA on cube_${ENV_TYPE}_expert_features ..."
 uv run python scripts/train/prejepa.py \
     --config-name prejepa_cube_features \
     dataset_name=cube_${ENV_TYPE}_expert_features \
-    cache_dir=$STABLEWM_HOME \
+    cache_dir=$WORK_DIR \
     trainer.max_epochs=20 \
     +trainer.limit_val_batches=0 \
     batch_size=256 \
