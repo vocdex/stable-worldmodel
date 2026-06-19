@@ -7,26 +7,28 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --time=0-08:00
 #SBATCH --mem=64G
-#SBATCH --array=0-15
+#SBATCH --array=0-47
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_cube_countgen_%A_%a.out
 #SBATCH --error=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_cube_countgen_%A_%a.err
 
-# 4x4 count-generalization matrix for DINO-WM.
-# Rows = train count (which model), cols = test count (which env).
-# Cell id = train_idx * 4 + test_idx.
+# 4x4 count-generalization matrix for DINO-WM, 3 seeds (0,1,2).
+# Array 0-47: task/16 = seed index (seeds 0,1,2), task%16 = cell (train*4+test).
 #
 # Submit after all 4 training jobs finish:
 #   sbatch scripts/cluster/plan_ood/cube_count_generalization.sh
 #
 # Override knobs:
-#   EPOCH=20 NUM_EVAL=50 NUM_SAMPLES=300 SEED=42 sbatch ...
+#   EPOCH=20 NUM_EVAL=50 NUM_SAMPLES=300 sbatch ...
 
 COUNTS=(single double triple quadruple)
 CONFIGS=(cube cube_double cube_triple cube_quadruple)
+SEEDS=(0 1 2)
 
 TASK_ID=$SLURM_ARRAY_TASK_ID
-TRAIN_IDX=$(( TASK_ID / 4 ))
-TEST_IDX=$(( TASK_ID % 4 ))
+SEED_IDX=$(( TASK_ID / 16 ))
+CELL_ID=$(( TASK_ID % 16 ))
+TRAIN_IDX=$(( CELL_ID / 4 ))
+TEST_IDX=$(( CELL_ID % 4 ))
 TRAIN_COUNT="${COUNTS[$TRAIN_IDX]}"
 TEST_COUNT="${COUNTS[$TEST_IDX]}"
 CONFIG="${CONFIGS[$TEST_IDX]}"
@@ -37,7 +39,7 @@ NUM_SAMPLES=${NUM_SAMPLES:-300}
 BATCH_SIZE=${BATCH_SIZE:-4}
 N_STEPS=${N_STEPS:-30}
 TOPK=${TOPK:-30}
-SEED=${SEED:-42}
+SEED="${SEEDS[$SEED_IDX]}"
 
 echo "=================================================="
 echo "SLURM job=$SLURM_JOB_ID array_task=$TASK_ID"
