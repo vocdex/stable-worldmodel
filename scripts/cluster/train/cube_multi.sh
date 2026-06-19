@@ -48,6 +48,7 @@ export PYTHONUNBUFFERED=1
 mkdir -p "$WANDB_DIR" "$HF_HOME" "$TORCH_HOME"
 
 WORK_DIR=/mnt/lustre/work/martius/mot956/stable-worldmodel
+export STABLEWM_HOME=$WORK_DIR
 cd "$WORK_DIR"
 
 uv sync --extra train --extra env
