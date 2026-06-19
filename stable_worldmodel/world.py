@@ -1187,30 +1187,20 @@ class World:
             video_path_obj = Path(video_path)
             video_path_obj.mkdir(parents=True, exist_ok=True)
             for i in range(self.num_envs):
-                # Goal inset: the planner's ACTUAL goal (snapshotted before
-                # the loop, perturbed under the active variation) rather than
-                # the H5 dataset frame (target_frames[i,-1]), which is
-                # unperturbed and misrepresents what the planner targeted.
-                if video_goal_frames is not None:
-                    goal_img = video_goal_frames[i]
-                else:
-                    goal_img = target_frames[i, -1]
-                inset = goal_img[::4, ::4]
-                ih, iw = inset.shape[:2]
-                verdict = (
-                    'success' if results['episode_successes'][i] else 'fail'
+                goal_img = (
+                    video_goal_frames[i]
+                    if video_goal_frames is not None
+                    else target_frames[i, -1]
                 )
-                out = imageio.get_writer(
-                    video_path_obj / f'ep{i:03d}_{verdict}.mp4',
+                verdict = 'success' if results['episode_successes'][i] else 'fail'
+                frames = video_frames[i, :steps_used]  # (T, H, W, C)
+                goal_panel = np.broadcast_to(goal_img[None], frames.shape)
+                combined = np.concatenate([frames, goal_panel], axis=2)  # side-by-side
+                imageio.mimwrite(
+                    str(video_path_obj / f'ep{i:03d}_{verdict}.mp4'),
+                    combined,
                     fps=15,
-                    codec='libx264',
                 )
-                for t in range(steps_used):
-                    frame = video_frames[i, t].copy()
-                    frame[: ih + 2, -(iw + 2) :] = 0  # thin border
-                    frame[:ih, -iw:] = inset
-                    out.append_data(frame)
-                out.close()
             print(f'Video saved to {video_path_obj}')
 
         if results['seeds'] is not None:
