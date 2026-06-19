@@ -50,13 +50,12 @@ for in-distribution double), suggesting more stable planning in patch-feature sp
 | | DINO-WM (SWM) | SlotFormer (cjepa) |
 |---|---|---|
 | Features | DINO ViT-S/8 patch grid, 224px | Frozen SC encoder, 7 slots, 256px |
-| Planning | CEM-300, n_steps=30, topk=30 | CEM-300, goal-weighted slot filter |
-| Max episode steps | 250 / 500 / 750 / 1000 (scaled by count) | 100 (= 2 × eval_budget, fixed) |
+| Planning | CEM-300, horizon=5, receding=5, action_block=5 | CEM-300, same + goal-weighted slot filter |
+| Eval budget | 50 planning calls (same) | 50 planning calls (same) |
 | Eval split | full dataset | train split (~2500 eps) |
 
-The most notable difference: cjepa uses `+slot_filter=goal_weighted` during planning, which
-re-weights slots by goal relevance — an explicit mechanism to help SlotFormer focus on the
-right objects. DINO-WM has no equivalent and still wins on 12/16 cells.
-
-The episode step budget differs: SWM scales max steps with cube count (more time for harder
-tasks), while cjepa fixes it at 100 regardless. This likely benefits DINO-WM on triple/quadruple.
+The comparison is approximately matched on compute budget (same eval_budget, same CEM samples,
+same horizon/receding_horizon/action_block). The main structural difference: cjepa applies
+`+slot_filter=goal_weighted` during CEM — an explicit mechanism that re-weights slots by goal
+relevance to help SlotFormer focus on the right objects. DINO-WM has no equivalent and still
+wins on 12/16 cells.
