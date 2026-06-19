@@ -7,7 +7,7 @@ world:
   max_episode_steps: 1000
 
 eval:
-  eval_budget: 200
+  eval_budget: 50
   dataset_name: cube_quadruple_expert
   callables:
     - method: set_state

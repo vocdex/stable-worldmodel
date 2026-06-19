@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --partition=a100-galvani
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=0-06:00
+#SBATCH --time=0-08:00
 #SBATCH --mem=64G
 #SBATCH --array=0-15
 #SBATCH --output=/mnt/lustre/work/martius/mot956/stable-worldmodel/logs/swm_cube_countgen_%A_%a.out
