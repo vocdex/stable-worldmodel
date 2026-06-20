@@ -59,3 +59,22 @@ same horizon/receding_horizon/action_block). The main structural difference: cje
 `+slot_filter=goal_weighted` during CEM — an explicit mechanism that re-weights slots by goal
 relevance to help SlotFormer focus on the right objects. DINO-WM has no equivalent and still
 wins on 12/16 cells.
+
+## Model parameters
+
+| Component | DINO-WM | SlotFormer |
+|---|---|---|
+| Visual backbone (frozen) | 22.1M (DINO ViT-S/8) | 22.0M (SC ViT-S, in SC encoder ckpt) |
+| **Trained WM dynamics** | **23.2M** | **3.7M** (3.2M predictor + 0.5M slot attention) |
+| Total at inference | 45.3M | 28.8M |
+
+The visual backbone runs **once per receding-horizon step** (every 5 env steps) to encode the
+new real observation into a latent. Everything inside CEM — 300 candidate sequences × 5 imagined
+steps = 1500 forward passes — uses only the **predictor**. So the backbone cost is negligible;
+the dynamics model is the bottleneck.
+
+DINO-WM's predictor is **6× larger** (23.2M vs 3.7M) because it operates on the full patch grid
+(~784 tokens at 224px). SlotFormer compresses each frame to 7 slots × 128-dim = 896 values,
+making its dynamics model cheap but potentially lossy. The comparison is not parameter-matched
+at the WM level — DINO-WM's advantage may partly reflect its larger dynamics capacity, not just
+the patch-vs-slot representation choice.
