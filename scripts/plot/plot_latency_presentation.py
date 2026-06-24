@@ -39,7 +39,7 @@ def plot_token_reduction(ax):
             fontsize=26, color="#222", ha="center", fontfamily="monospace")
 
     # Arrow
-    ax.text(0.5, 0.38, "↓  99.5% fewer values", transform=ax.transAxes,
+    ax.text(0.5, 0.38, "↓  99% reduction", transform=ax.transAxes,
             fontsize=17, color="#888", ha="center", style="italic")
 
     # SlotContrast-WM row
