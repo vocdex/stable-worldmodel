@@ -30,74 +30,34 @@ LATENCY = [
 
 
 def plot_token_reduction(ax):
-    ax.set_xlim(0, 10)
-    ax.set_ylim(0, 10)
-    ax.set_aspect("equal")
     ax.axis("off")
     ax.set_title("Feature space per frame", fontsize=22, pad=14)
 
-    # --- DINO: 16×16 grid of tiny squares ---
-    grid = 16
-    sq = 0.22
-    gap = 0.005
-    origin_x, origin_y = 0.3, 1.6
-    for r in range(grid):
-        for c in range(grid):
-            x = origin_x + c * (sq + gap)
-            y = origin_y + r * (sq + gap)
-            rect = mpatches.FancyBboxPatch(
-                (x, y), sq, sq,
-                boxstyle="square,pad=0",
-                facecolor=DINO_FILL, edgecolor=DINO_EDGE, linewidth=0.3,
-            )
-            ax.add_patch(rect)
+    rows = [
+        ("DINO-WM",          "256 tokens × 384-d", "= 98,304 values", DINO_FILL, DINO_EDGE),
+        ("SlotContrast-WM\n(ours)", "4 tokens × 128-d",  "= 512 values\n(192× fewer)", SC_FILL, SC_EDGE),
+    ]
 
-    dino_top = origin_y + grid * (sq + gap) + 0.05
-    dino_cx  = origin_x + grid * (sq + gap) / 2
-    ax.text(dino_cx, dino_top + 0.05, "256 tokens", ha="center", va="bottom",
-            fontsize=14, fontweight="bold", color=DINO_EDGE)
-    ax.text(dino_cx, dino_top + 0.52, "384-d each", ha="center", va="bottom",
-            fontsize=12, color="#444")
-    ax.text(dino_cx, origin_y - 0.55, "98,304 values", ha="center", va="top",
-            fontsize=11, color="#555", style="italic")
-
-    # --- Arrow ---
-    arrow_x = origin_x + grid * (sq + gap) + 0.35
-    arrow_cx = arrow_x + 0.55
-    mid_y = origin_y + grid * (sq + gap) / 2
-    ax.annotate("", xy=(arrow_x + 1.1, mid_y), xytext=(arrow_x, mid_y),
-                arrowprops=dict(arrowstyle="-|>", color="#555",
-                                lw=2.2, mutation_scale=18))
-    ax.text(arrow_cx, mid_y + 0.38, "192×", ha="center", va="bottom",
-            fontsize=13, fontweight="bold", color="#555")
-    ax.text(arrow_cx, mid_y - 0.38, "fewer", ha="center", va="top",
-            fontsize=11, color="#777")
-
-    # --- Slots: 4 larger squares in a column ---
-    n_slots = 4
-    sl_w, sl_h = 0.78, 0.72
-    sl_gap = 0.18
-    sl_x = arrow_x + 1.25
-    total_h = n_slots * sl_h + (n_slots - 1) * sl_gap
-    sl_y0 = mid_y - total_h / 2
-
-    for i in range(n_slots):
-        y = sl_y0 + i * (sl_h + sl_gap)
-        rect = mpatches.FancyBboxPatch(
-            (sl_x, y), sl_w, sl_h,
-            boxstyle="round,pad=0.04",
-            facecolor=SC_FILL, edgecolor=SC_EDGE, linewidth=1.6,
+    y_positions = [0.62, 0.18]
+    for (name, size, total, fill, edge), y in zip(rows, y_positions):
+        # coloured label box
+        ax.text(0.08, y + 0.08, name, transform=ax.transAxes,
+                fontsize=16, fontweight="bold", color=edge,
+                va="center", ha="left")
+        ax.text(0.08, y - 0.07, size, transform=ax.transAxes,
+                fontsize=19, color="#222", va="center", ha="left",
+                fontfamily="monospace")
+        ax.text(0.08, y - 0.21, total, transform=ax.transAxes,
+                fontsize=13, color="#666", va="center", ha="left",
+                style="italic")
+        # coloured bar on the left edge
+        bar = mpatches.FancyBboxPatch(
+            (0.02, y - 0.26), 0.04, 0.42,
+            boxstyle="round,pad=0.01", transform=ax.transAxes,
+            facecolor=fill, edgecolor=edge, linewidth=1.5,
+            clip_on=False,
         )
-        ax.add_patch(rect)
-
-    sl_cx = sl_x + sl_w / 2
-    sl_top = sl_y0 + total_h
-    ax.text(sl_cx, sl_top + 0.1, "4 tokens", ha="center", va="bottom",
-            fontsize=14, fontweight="bold", color=SC_EDGE)
-    ax.text(sl_cx, sl_top + 0.57, "128-d each", ha="center", va="bottom",
-            fontsize=12, color="#444")
-    ax.text(sl_cx, sl_y0 - 0.55, "512 values", ha="center", va="top",
-            fontsize=11, color="#555", style="italic")
+        ax.add_patch(bar)
 
 
 def plot_latency(ax):
