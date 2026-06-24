@@ -15,7 +15,6 @@ Planning latency (RTX 4080, fp32, B=1, N=300, 30 CEM iters, H=5, averaged PushT+
 
 import argparse
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import numpy as np
 
 DINO_FILL  = "#a9c5e0"; DINO_EDGE  = "#5b8fc4"
@@ -33,31 +32,21 @@ def plot_token_reduction(ax):
     ax.axis("off")
     ax.set_title("Feature space per frame", fontsize=22, pad=14)
 
-    rows = [
-        ("DINO-WM",          "256 tokens × 384-d", "= 98,304 values", DINO_FILL, DINO_EDGE),
-        ("SlotContrast-WM\n(ours)", "4 tokens × 128-d",  "= 512 values\n(192× fewer)", SC_FILL, SC_EDGE),
-    ]
+    # DINO-WM row
+    ax.text(0.5, 0.72, "DINO-WM", transform=ax.transAxes,
+            fontsize=17, fontweight="bold", color=DINO_EDGE, ha="center")
+    ax.text(0.5, 0.55, "256 × 384-d", transform=ax.transAxes,
+            fontsize=26, color="#222", ha="center", fontfamily="monospace")
 
-    y_positions = [0.62, 0.18]
-    for (name, size, total, fill, edge), y in zip(rows, y_positions):
-        # coloured label box
-        ax.text(0.08, y + 0.08, name, transform=ax.transAxes,
-                fontsize=16, fontweight="bold", color=edge,
-                va="center", ha="left")
-        ax.text(0.08, y - 0.07, size, transform=ax.transAxes,
-                fontsize=19, color="#222", va="center", ha="left",
-                fontfamily="monospace")
-        ax.text(0.08, y - 0.21, total, transform=ax.transAxes,
-                fontsize=13, color="#666", va="center", ha="left",
-                style="italic")
-        # coloured bar on the left edge
-        bar = mpatches.FancyBboxPatch(
-            (0.02, y - 0.26), 0.04, 0.42,
-            boxstyle="round,pad=0.01", transform=ax.transAxes,
-            facecolor=fill, edgecolor=edge, linewidth=1.5,
-            clip_on=False,
-        )
-        ax.add_patch(bar)
+    # Arrow
+    ax.text(0.5, 0.38, "↓  99.5% fewer values", transform=ax.transAxes,
+            fontsize=17, color="#888", ha="center", style="italic")
+
+    # SlotContrast-WM row
+    ax.text(0.5, 0.24, "SlotContrast-WM (ours)", transform=ax.transAxes,
+            fontsize=17, fontweight="bold", color=SC_EDGE, ha="center")
+    ax.text(0.5, 0.07, "4 × 128-d", transform=ax.transAxes,
+            fontsize=26, color="#222", ha="center", fontfamily="monospace")
 
 
 def plot_latency(ax):
