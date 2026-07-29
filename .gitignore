@@ -229,3 +229,4 @@ old_tests/
 results/
 local_scripts/
 *.gif
+*.png
