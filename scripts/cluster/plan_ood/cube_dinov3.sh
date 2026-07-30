@@ -24,8 +24,9 @@
 # ordered (42, 0, 1) so tasks 0-14 reproduce the primary seed-42 matrix first.
 #
 # Branch: dinov3-cube-ablation (train with scripts/cluster/train/cube_dinov3.sh
-# first). Needs the gated DINOv3 weights in $HF_HOME (see the train script
-# header for the one-time rsync).
+# first). The gated DINOv3 weights are auto-downloaded into $HF_HOME given an
+# HF token — see the train script header for the one-time token setup. After
+# the train job ran, the snapshot is already cached and no auth is needed.
 #
 # Idempotency: each cell writes `${RESULTS_DIR}/cells/<label>/done.flag` on
 # success. Re-submitting the same array (e.g. after a crash) only runs the
@@ -138,11 +139,11 @@ export PYTHONUNBUFFERED=1
 export MUJOCO_GL=egl
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-# --- Pre-flight: gated DINOv3 weights must be reachable ---
+# --- Pre-flight: gated DINOv3 weights need a cached snapshot or HF auth ---
 DINOV3_SNAPSHOT="$HF_HOME/hub/models--facebook--dinov3-vits16-pretrain-lvd1689m"
-if [ ! -d "$DINOV3_SNAPSHOT" ] && [ -z "${HF_TOKEN:-}" ]; then
-    echo "FATAL: DINOv3 weights not in $HF_HOME and HF_TOKEN unset."
-    echo "See scripts/cluster/train/cube_dinov3.sh header for the rsync."
+if [ ! -d "$DINOV3_SNAPSHOT" ] && [ -z "${HF_TOKEN:-}" ] && [ ! -f "$HF_HOME/token" ]; then
+    echo "FATAL: DINOv3 weights not cached and no HF token found."
+    echo "See scripts/cluster/train/cube_dinov3.sh header for the token setup."
     touch "$CELL_DIR/failed.flag"
     exit 3
 fi

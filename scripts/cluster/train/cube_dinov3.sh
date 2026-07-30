@@ -24,11 +24,15 @@
 #   git fetch && git checkout dinov3-cube-ablation && git pull
 #
 # GATED WEIGHTS: facebook/dinov3-vits16-pretrain-lvd1689m requires an accepted
-# license on HuggingFace. Either seed the cache once from a machine that has
-# the snapshot (run locally):
-#   rsync -av ~/.cache/huggingface/hub/models--facebook--dinov3-vits16-pretrain-lvd1689m \
-#       mot956@134.2.168.114:/mnt/lustre/work/martius/mot956/hf/hub/
-# or export HF_TOKEN before sbatch. The job fails fast if neither is present.
+# license on HuggingFace. The job downloads the weights automatically (compute
+# nodes have outbound internet) once a token from an account with the accepted
+# license is available. One-time setup on the cluster (token string = contents
+# of ~/.cache/huggingface/token on your local machine):
+#   mkdir -p /mnt/lustre/work/martius/mot956/hf
+#   echo 'hf_...your-token...' > /mnt/lustre/work/martius/mot956/hf/token
+#   chmod 600 /mnt/lustre/work/martius/mot956/hf/token
+# (huggingface_hub reads $HF_HOME/token; exporting HF_TOKEN also works.)
+# The job fails fast if neither a cached snapshot nor a token is present.
 #
 # Submit:
 #   sbatch scripts/cluster/train/cube_dinov3.sh
@@ -63,13 +67,14 @@ export TORCH_HOME=/mnt/lustre/work/martius/mot956/torch_hub
 export PYTHONUNBUFFERED=1
 mkdir -p "$WANDB_DIR" "$HF_HOME" "$TORCH_HOME"
 
-# --- Pre-flight: gated DINOv3 weights must be reachable ---
+# --- Pre-flight: gated DINOv3 weights need a cached snapshot or HF auth ---
 DINOV3_SNAPSHOT="$HF_HOME/hub/models--facebook--dinov3-vits16-pretrain-lvd1689m"
-if [ ! -d "$DINOV3_SNAPSHOT" ] && [ -z "${HF_TOKEN:-}" ]; then
-    echo "FATAL: DINOv3 weights not in $HF_HOME and HF_TOKEN unset."
-    echo "Seed the cache from a machine with the snapshot:"
-    echo "  rsync -av ~/.cache/huggingface/hub/models--facebook--dinov3-vits16-pretrain-lvd1689m \\"
-    echo "      mot956@134.2.168.114:$HF_HOME/hub/"
+if [ ! -d "$DINOV3_SNAPSHOT" ] && [ -z "${HF_TOKEN:-}" ] && [ ! -f "$HF_HOME/token" ]; then
+    echo "FATAL: DINOv3 weights not cached and no HF token found."
+    echo "The weights are gated; the job downloads them automatically once a"
+    echo "token from an account with the accepted license exists. Run once:"
+    echo "  echo 'hf_...your-token...' > $HF_HOME/token && chmod 600 $HF_HOME/token"
+    echo "(token string = contents of ~/.cache/huggingface/token on your laptop)"
     exit 3
 fi
 
