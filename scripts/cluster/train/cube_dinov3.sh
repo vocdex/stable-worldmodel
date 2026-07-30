@@ -67,14 +67,22 @@ export TORCH_HOME=/mnt/lustre/work/martius/mot956/torch_hub
 export PYTHONUNBUFFERED=1
 mkdir -p "$WANDB_DIR" "$HF_HOME" "$TORCH_HOME"
 
-# --- Pre-flight: gated DINOv3 weights need a cached snapshot or HF auth ---
+# --- Pre-flight: gated DINOv3 weights need a COMPLETE cached snapshot or HF auth ---
+# A bare directory is not enough (a partial rsync/download leaves one behind);
+# require a resolvable config.json inside snapshots/. -L follows the blob
+# symlinks so broken links from an aborted transfer don't count.
 DINOV3_SNAPSHOT="$HF_HOME/hub/models--facebook--dinov3-vits16-pretrain-lvd1689m"
-if [ ! -d "$DINOV3_SNAPSHOT" ] && [ -z "${HF_TOKEN:-}" ] && [ ! -f "$HF_HOME/token" ]; then
-    echo "FATAL: DINOv3 weights not cached and no HF token found."
+CACHED_CFG=$(find -L "$DINOV3_SNAPSHOT/snapshots" -maxdepth 2 -name config.json 2>/dev/null | head -1)
+if [ -z "$CACHED_CFG" ] && [ -z "${HF_TOKEN:-}" ] && [ ! -f "$HF_HOME/token" ]; then
+    echo "FATAL: no complete DINOv3 snapshot in $HF_HOME and no HF token found."
     echo "The weights are gated; the job downloads them automatically once a"
     echo "token from an account with the accepted license exists. Run once:"
     echo "  echo 'hf_...your-token...' > $HF_HOME/token && chmod 600 $HF_HOME/token"
     echo "(token string = contents of ~/.cache/huggingface/token on your laptop)"
+    if [ -d "$DINOV3_SNAPSHOT" ]; then
+        echo "NOTE: $DINOV3_SNAPSHOT exists but is incomplete (aborted transfer?);"
+        echo "consider removing it: rm -rf $DINOV3_SNAPSHOT"
+    fi
     exit 3
 fi
 

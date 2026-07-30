@@ -139,10 +139,13 @@ export PYTHONUNBUFFERED=1
 export MUJOCO_GL=egl
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-# --- Pre-flight: gated DINOv3 weights need a cached snapshot or HF auth ---
+# --- Pre-flight: gated DINOv3 weights need a COMPLETE cached snapshot or HF auth ---
+# (bare dir is not enough — a partial transfer leaves one behind; -L requires
+# the config.json blob symlink to resolve)
 DINOV3_SNAPSHOT="$HF_HOME/hub/models--facebook--dinov3-vits16-pretrain-lvd1689m"
-if [ ! -d "$DINOV3_SNAPSHOT" ] && [ -z "${HF_TOKEN:-}" ] && [ ! -f "$HF_HOME/token" ]; then
-    echo "FATAL: DINOv3 weights not cached and no HF token found."
+CACHED_CFG=$(find -L "$DINOV3_SNAPSHOT/snapshots" -maxdepth 2 -name config.json 2>/dev/null | head -1)
+if [ -z "$CACHED_CFG" ] && [ -z "${HF_TOKEN:-}" ] && [ ! -f "$HF_HOME/token" ]; then
+    echo "FATAL: no complete DINOv3 snapshot in $HF_HOME and no HF token found."
     echo "See scripts/cluster/train/cube_dinov3.sh header for the token setup."
     touch "$CELL_DIR/failed.flag"
     exit 3
