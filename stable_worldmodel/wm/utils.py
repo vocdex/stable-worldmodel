@@ -135,7 +135,10 @@ def _build_prejepa_from_training_config(cfg: dict) -> torch.nn.Module:
             backbone = backbone.vision_model
         embed_dim = backbone.config.hidden_size
         num_patches = (cfg['image_size'] // cfg['patch_size']) ** 2
-        interp_pos_enc = True
+        # DINOv3 uses RoPE positions (no interpolate_pos_encoding kwarg) and
+        # prepends register tokens after CLS; mirror get_encoder in
+        # scripts/train/prejepa.py.
+        interp_pos_enc = backbone.config.model_type != 'dinov3_vit'
 
     # extra encodings widen the per-token embedding dim
     extra_enc_cfg = cfg.get('wm', {}).get('encoding', {}) or {}
@@ -174,6 +177,7 @@ def _build_prejepa_from_training_config(cfg: dict) -> torch.nn.Module:
         history_size=cfg['wm']['history_size'],
         num_pred=cfg['wm']['num_preds'],
         interpolate_pos_encoding=interp_pos_enc,
+        num_prefix_tokens=1 + getattr(backbone.config, 'num_register_tokens', 0),
     )
     return model
 

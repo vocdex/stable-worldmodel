@@ -13,6 +13,7 @@ class PreJEPA(torch.nn.Module):
         history_size=3,
         num_pred=1,
         interpolate_pos_encoding=True,
+        num_prefix_tokens=1,
     ):
         super().__init__()
 
@@ -24,6 +25,10 @@ class PreJEPA(torch.nn.Module):
         self.num_pred = num_pred
 
         self.interpolate_pos_encoding = interpolate_pos_encoding
+        # Number of non-patch tokens at the START of last_hidden_state to
+        # strip: 1 for CLS-only backbones (dinov2, mae, ...), 1 + n_registers
+        # for register-token backbones (dinov3: 1 + 4 = 5).
+        self.num_prefix_tokens = num_prefix_tokens
 
     def encode(
         self,
@@ -88,7 +93,8 @@ class PreJEPA(torch.nn.Module):
 
         if hasattr(pixels_embed, 'last_hidden_state'):
             pixels_embed = pixels_embed.last_hidden_state
-            pixels_embed = pixels_embed[:, 1:, :]  # drop cls token
+            # drop cls (+ register) tokens
+            pixels_embed = pixels_embed[:, self.num_prefix_tokens :, :]
         else:
             pixels_embed = pixels_embed.logits.unsqueeze(
                 1

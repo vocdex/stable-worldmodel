@@ -33,7 +33,13 @@ ENCODER_CONFIGS = {
     'vit':    {'prefix': 'google/vit-'},
     'dino':   {'prefix': 'facebook/dino-'},
     'dinov2':  {'prefix': 'facebook/dinov2-'},
-    'dinov3':  {'prefix': 'facebook/dinov3-'},
+    'dinov3':  {
+        'prefix': 'facebook/dinov3-',
+        # RoPE positions — forward() has no interpolate_pos_encoding kwarg.
+        'interpolate_pos_encoding': False,
+        # last_hidden_state = [CLS, n_register (4 for vits16), patches].
+        'num_prefix_tokens': lambda m: 1 + getattr(m.config, 'num_register_tokens', 0),
+    },
     'webssl':  {'prefix': 'facebook/webssl-'},
     'mae':    {'prefix': 'facebook/vit-mae-'},
     'ijepa':  {'prefix': 'facebook/ijepa'},
@@ -44,7 +50,7 @@ ENCODER_CONFIGS = {
 
 
 def get_encoder(cfg):
-    """Load a pretrained vision encoder and return (backbone, embed_dim, num_patches, interp_pos_enc)."""
+    """Load a pretrained vision encoder and return (backbone, embed_dim, num_patches, interp_pos_enc, num_prefix_tokens)."""
     encoder_cfg = next(
         (
             c
@@ -70,8 +76,18 @@ def get_encoder(cfg):
     is_cnn = cfg.backbone.name.startswith('microsoft/resnet-')
     num_patches = 1 if is_cnn else (cfg.image_size // cfg.patch_size) ** 2
     interp_pos_enc = encoder_cfg.get('interpolate_pos_encoding', True)
+    num_prefix_tokens = encoder_cfg.get(
+        'num_prefix_tokens', lambda m: 1
+    )(backbone)
 
-    return backbone, embed_dim, num_patches, interp_pos_enc
+    backbone_patch = getattr(backbone.config, 'patch_size', None)
+    if not is_cnn and backbone_patch is not None:
+        assert backbone_patch == cfg.patch_size, (
+            f'cfg.patch_size={cfg.patch_size} but {cfg.backbone.name} has '
+            f'patch_size={backbone_patch}; num_patches would be wrong.'
+        )
+
+    return backbone, embed_dim, num_patches, interp_pos_enc, num_prefix_tokens
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +337,9 @@ def run(cfg):
     )
 
     # --- Model ---
-    encoder, embed_dim, num_patches, interp_pos_enc = get_encoder(cfg)
+    encoder, embed_dim, num_patches, interp_pos_enc, num_prefix_tokens = (
+        get_encoder(cfg)
+    )
     embed_dim += sum(cfg.wm.get('encoding', {}).values())
 
     if cfg.backbone.get('is_video_encoder', False):
@@ -354,6 +372,7 @@ def run(cfg):
         history_size=cfg.wm.history_size,
         num_pred=cfg.wm.num_preds,
         interpolate_pos_encoding=interp_pos_enc,
+        num_prefix_tokens=num_prefix_tokens,
     )
 
     world_model = spt.Module(

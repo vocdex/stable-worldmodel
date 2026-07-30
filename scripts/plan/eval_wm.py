@@ -132,7 +132,12 @@ def run(cfg: DictConfig):
         model = model.to('cuda')
         model = model.eval()
         model.requires_grad_(False)
-        model.interpolate_pos_encoding = True
+        # Respect the loader's choice when it set the flag (e.g. DINOv3
+        # backbones use RoPE — their forward() has no interpolate_pos_encoding
+        # kwarg and must keep it False). Legacy models without the attribute
+        # keep the old always-on behavior.
+        if not hasattr(model, 'interpolate_pos_encoding'):
+            model.interpolate_pos_encoding = True
 
         # If the model carries DINO-WM training-time normalization constants
         # (`dw_*_mean/std`, set by load_dino_wm_external), override the

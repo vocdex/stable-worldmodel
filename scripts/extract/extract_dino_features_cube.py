@@ -23,6 +23,7 @@ Run locally first:
 from __future__ import annotations
 
 import argparse
+import inspect
 import os
 from pathlib import Path
 
@@ -178,11 +179,21 @@ def main():
     encoder = AutoModel.from_pretrained(args.backbone).to(args.device)
     encoder.eval()
     encoder.requires_grad_(False)
+    # DINOv3 prepends register tokens after CLS ([CLS, reg*4, patches]) and
+    # its RoPE-based forward has no interpolate_pos_encoding kwarg.
+    n_prefix = 1 + getattr(encoder.config, 'num_register_tokens', 0)
+    fwd_kwargs = (
+        {'interpolate_pos_encoding': True}
+        if 'interpolate_pos_encoding'
+        in inspect.signature(encoder.forward).parameters
+        else {}
+    )
+    print(f'Prefix tokens stripped: {n_prefix}  forward kwargs: {fwd_kwargs}')
     # Probe output shape (patches, dim)
     with torch.amp.autocast(args.device, dtype=dtype):
         probe = torch.zeros(1, 3, args.image_size, args.image_size, device=args.device)
-        out = encoder(probe, interpolate_pos_encoding=True).last_hidden_state
-        out = out[:, 1:, :]  # drop cls token
+        out = encoder(probe, **fwd_kwargs).last_hidden_state
+        out = out[:, n_prefix:, :]  # drop cls (+ register) tokens
         P, D = out.shape[1], out.shape[2]
     print(f'Feature shape per frame: ({P}, {D})  dtype={args.dtype}')
     print(f'Feature memory: {n_kept * P * D * (2 if dtype != torch.float32 else 4) / 1e9:.1f} GB (raw)')
@@ -231,8 +242,8 @@ def main():
         for batch in loader:
             batch = batch.to(args.device, non_blocking=True)
             with torch.amp.autocast(args.device, dtype=dtype):
-                out = encoder(batch, interpolate_pos_encoding=True).last_hidden_state
-                out = out[:, 1:, :]  # drop cls
+                out = encoder(batch, **fwd_kwargs).last_hidden_state
+                out = out[:, n_prefix:, :]  # drop cls (+ registers)
             out = out.to(torch.float16).cpu().numpy()
             n = out.shape[0]
             feats[n_done : n_done + n] = out
