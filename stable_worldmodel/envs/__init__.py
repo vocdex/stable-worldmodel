@@ -24,6 +24,11 @@ register(
 )
 
 register(
+    id='swm/PushTMulti-v1',
+    entry_point='stable_worldmodel.envs.pusht_multi.env:PushTMulti',
+)
+
+register(
     id='swm/SimplePointMaze-v0',
     entry_point='stable_worldmodel.envs.simple_point_maze:SimplePointMazeEnv',
 )

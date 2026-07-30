@@ -881,6 +881,12 @@ class World:
             for i in range(self.num_envs):
                 options[i]['variation'] = variation_overrides.get('variation', [])
                 options[i]['variation_values'] = variation_overrides.get('variation_values', {})
+                # Force the env to render a fresh goal frame under the active
+                # variation; otherwise envs like OGBench-Cube leave
+                # `_cur_goal_rendered = None` (its `_render_goal` defaults to
+                # False) and the re-render np.stack below produces an
+                # object-array of Nones, crashing downstream consumers.
+                options[i]['render_goal'] = True
 
         init_step.update(deepcopy(goal_step))
         self.reset(seed=seeds, options=options)  # set seeds for all envs
@@ -966,6 +972,32 @@ class World:
         self.infos.update(deepcopy(init_step))
         self.infos.update(deepcopy(goal_step))
 
+        # Re-render the START observation under the active variation. The
+        # update above overwrote self.infos['pixels'] with the H5 frame, which
+        # was rendered WITHOUT the variation — so the planner's initial
+        # observation would be unperturbed even though the goal is perturbed
+        # (appearance-mismatched start/goal). The env is now at the H5 start
+        # pose with the variation-modified model, so env.render() gives the
+        # correct variation-applied start frame. Only fires under a variation
+        # override, so baseline / in-distribution evals are byte-identical.
+        if variation_overrides is not None and 'pixels' in self.infos:
+            try:
+                start_frames = np.stack([
+                    env.unwrapped.render() for env in self.envs.unwrapped.envs
+                ])
+                self.infos['pixels'][:] = np.broadcast_to(
+                    start_frames[:, None], self.infos['pixels'].shape
+                )
+            except (AttributeError, ValueError) as e:
+                # Don't silently fall back to an unperturbed start frame under a
+                # variation — that's a correctness hole (perturbed goal vs clean
+                # start). Surface it loudly so it can't pass unnoticed.
+                raise RuntimeError(
+                    'Failed to re-render the variation-perturbed start frame; '
+                    'refusing to plan with an unperturbed start under a '
+                    f'variation override. Original error: {e!r}'
+                ) from e
+
         if (
             variation_overrides is None
             and 'goal' in goal_step
@@ -976,6 +1008,14 @@ class World:
             )
 
         target_frames = torch.stack([ep['pixels'] for ep in data]).numpy()
+        # Snapshot the planner's goal frame NOW, before the eval loop. After the
+        # loop the env may have auto-reset (without the variation options), so
+        # self.infos['goal'] would revert to an unperturbed frame — capturing it
+        # here keeps the video's goal panel consistent with what the planner
+        # actually targeted (perturbed under the active variation).
+        video_goal_frames = (
+            self.infos['goal'][:, -1].copy() if 'goal' in self.infos else None
+        )
         video_frames = np.empty(
             (self.num_envs, eval_budget, *self.infos['pixels'].shape[-3:]),
             dtype=np.uint8,
@@ -1024,7 +1064,15 @@ class World:
                     fps=15,
                     codec='libx264',
                 )
-                goals = np.vstack([target_frames[i, -1], target_frames[i, -1]])
+                # Goal panel: use the planner's ACTUAL goal (snapshotted before
+                # the loop, perturbed under the active variation) rather than the
+                # H5 dataset frame (target_frames[i,-1]), which is unperturbed
+                # and misrepresents what the planner targeted.
+                if video_goal_frames is not None:
+                    goal_img = video_goal_frames[i]
+                else:
+                    goal_img = target_frames[i, -1]
+                goals = np.vstack([goal_img, goal_img])
                 for t in range(steps_used):
                     stacked_frame = np.vstack(
                         [video_frames[i, t], target_frames[i, t % target_len]]

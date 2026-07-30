@@ -1,0 +1,93 @@
+defaults:
+  - _self_
+
+# Defaults to a local-runnable config (no SLURM). For cluster submission
+# pass:
+#   hydra/launcher=submitit_slurm \
+#   +hydra.launcher.max_num_timeout=999 \
+#   +hydra.launcher.cpus_per_task=8 \
+#   +hydra.launcher.mem_gb=256 \
+#   +hydra.launcher.timeout_min=1440 \
+#   +hydra.launcher.partition=long-cpu \
+#   +hydra.launcher.signal_delay_s=120 \
+#   hydra.mode=MULTIRUN
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+
+# ---- Identity / split selection ----
+# `objects` is the env's "available identities" (must be consistent
+# across all datasets a single SC model will see).
+# `enabled_objects` picks which of those are *active* per episode
+# (used only when subset_mode=fixed).
+# `subset_mode`:
+#   fixed  — every episode uses `enabled_objects` verbatim.
+#   random — every episode samples k ~ U[k_min, k_max] then a uniform
+#            subset of that size from `objects`. Use this for the
+#            SlotContrast training set so SC sees varied k and varied
+#            identity combinations.
+objects: [A, B, C, D, E, F]
+enabled_objects: [A, B]
+dataset_name: pusht_multi_AB
+subset_mode: fixed
+subset_k_range: [1, 6]
+
+# ---- Collection scale ----
+# Single HDF5 file per dataset at <cache>/datasets/<dataset_name>.h5.
+# Re-running with the same dataset_name resumes from the existing file.
+num_traj: 10000
+seed: 3072
+cache_dir: null
+
+# ---- World wrapper ----
+# max_episode_steps scales with k: rule of thumb 60 + 60*k. With k=2 → 180.
+world:
+  num_envs: 8
+  max_episode_steps: 180
+  image_shape: [224, 224]
+
+# ---- Policy ----
+# policy.kind = weak | expert | cem
+#   weak   — MultiObjectWeakPolicy (random with focus bias + wedge mode).
+#   expert — MultiObjectGoalPolicy (state-based push-toward-goal).
+#   cem    — MultiObjectCEMPolicy (oracle-CEM MPC using the actual env
+#            as the dynamics model). High quality, slow, requires
+#            num_envs=1.
+policy:
+  kind: cem
+  # MultiObjectWeakPolicy params
+  dist_constraint: 100
+  switch_every: 10
+  p_wedge: 0.3
+  # MultiObjectGoalPolicy params
+  push_distance: 60
+  noise_std: 0.03               # small action noise, std-PushT-ish
+  expert_switch_every: 80       # higher → less thrashing between objects
+  switch_pos_tol: 18
+  expert_max_step: 0.3          # cap on per-step displacement magnitude
+  # EMA smoothing on the executed action. The smoothness it buys is
+  # outweighed by the responsiveness it costs: when the policy commands
+  # a sharp direction change (e.g. at a focus switch or PUSH/STAGE
+  # transition), EMA blends the new and previous actions and cancels
+  # the intent. Disabled by default; max_step + small noise is enough.
+  expert_action_smoothing: 1.0
+  # MultiObjectCEMPolicy params
+  cem_horizon: 8
+  cem_num_samples: 64
+  cem_n_iter: 2
+  cem_topk: 8
+  cem_replan_every: 3
+  cem_init_std: 0.3
+  cem_action_noise_std: 0.05
+  cem_angle_weight: 30.0
+  cem_action_penalty: 1.5     # cost += penalty * Σ‖a‖² in rollout
+  cem_action_clip: 0.3        # cap CEM-sampled actions to ±this
+  # Smoothness penalty: cost += smoothness_weight * Σ‖aₜ − aₜ₋₁‖² over
+  # the rollout including the boundary to the previously executed action.
+  # Standard PushT expert mean |Δa| ≈ 0.085 and sign-flip rate ~7%;
+  # without this term ours were 0.44 and 27% respectively.
+  cem_smoothness_weight: 8.0
+  # Warm-start the CEM mean from the previous elite plan (shifted left
+  # by `replan_every`, padded with zeros). Stops plan-boundary jumps.
+  cem_warm_start_from_previous: true

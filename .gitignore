@@ -212,6 +212,7 @@ logs/
 **/__pycache__/**
 **/*.pyc
 !scripts/minerl.sh
+!scripts/cluster/*.sh
 
 outputs/
 multirun/

@@ -18,11 +18,29 @@ import stable_worldmodel as swm
 
 
 def img_transform(cfg):
+    # DINO-WM's training pipeline normalizes pixels to [-1, 1] via
+    # Normalize(mean=0.5, std=0.5) BEFORE feeding to the (frozen) DINOv2
+    # encoder. The predictor was therefore trained on the feature
+    # distribution DINOv2 produces from [-1, 1]-normalized inputs — not
+    # from ImageNet-stats inputs. Match that to avoid feature distribution
+    # shift at planning time. PreJEPA / SWM-native models trained with
+    # ImageNet stats should override via cfg.eval.normalize='imagenet'.
+    norm = cfg.eval.get('normalize', 'imagenet')
+    if cfg.get('policy_kind') == 'dino_wm_external':
+        norm = cfg.eval.get('normalize', 'half')
+
+    if norm == 'half':
+        normalize = transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    elif norm == 'imagenet':
+        normalize = transforms.Normalize(**spt.data.dataset_stats.ImageNet)
+    else:
+        raise ValueError(f'unknown normalize: {norm!r}')
+
     transform = transforms.Compose(
         [
             transforms.ToImage(),
             transforms.ToDtype(torch.float32, scale=True),
-            transforms.Normalize(**spt.data.dataset_stats.ImageNet),
+            normalize,
             transforms.Resize(size=cfg.eval.img_size),
         ]
     )
@@ -115,6 +133,31 @@ def run(cfg: DictConfig):
         model = model.eval()
         model.requires_grad_(False)
         model.interpolate_pos_encoding = True
+
+        # If the model carries DINO-WM training-time normalization constants
+        # (`dw_*_mean/std`, set by load_dino_wm_external), override the
+        # sklearn-fit StandardScalers so what's fed to the model AND what's
+        # denormalized into env-units exactly matches the training distribution.
+        # The sklearn fit on the full h5 gives stats that diverge from
+        # DINO-WM's hardcoded constants — most importantly, proprio dim-1
+        # mean is 298 (sklearn) vs 264 (DINO-WM), a 34-unit shift larger than
+        # the 20-unit success threshold.
+        if getattr(model, 'dw_action_mean', None) is not None:
+            if 'action' in process:
+                process['action'].mean_ = model.dw_action_mean
+                process['action'].scale_ = model.dw_action_std
+                process['action'].var_ = model.dw_action_std ** 2
+            if 'proprio' in process:
+                process['proprio'].mean_ = model.dw_proprio_mean
+                process['proprio'].scale_ = model.dw_proprio_std
+                process['proprio'].var_ = model.dw_proprio_std ** 2
+            if 'goal_proprio' in process:
+                process['goal_proprio'].mean_ = model.dw_proprio_mean
+                process['goal_proprio'].scale_ = model.dw_proprio_std
+                process['goal_proprio'].var_ = model.dw_proprio_std ** 2
+            print('[eval_wm] Overrode process[action/proprio/goal_proprio] '
+                  'with DINO-WM training-time stats from adapter.')
+
         config = swm.PlanConfig(**cfg.plan_config)
         solver = hydra.utils.instantiate(cfg.solver, model=model)
         policy = swm.policy.WorldModelPolicy(
@@ -188,6 +231,12 @@ def run(cfg: DictConfig):
                     space = space[part]
                 vv[k] = np.array(v, dtype=space.dtype)
 
+    # Allow per-cell video paths via cfg.output.video_path; default to the
+    # ckpt-parent dir (legacy behavior). Useful for OOD arrays where parallel
+    # cells would otherwise race on the same rollout_*.mp4 filenames.
+    video_path = Path(cfg.output.get('video_path', results_path))
+    video_path.mkdir(parents=True, exist_ok=True)
+
     start_time = time.time()
     metrics = world.evaluate_from_dataset(
         dataset,
@@ -198,7 +247,7 @@ def run(cfg: DictConfig):
         callables=OmegaConf.to_container(
             cfg.eval.get('callables'), resolve=True
         ),
-        video_path=results_path,
+        video_path=video_path,
         variation_overrides=variation_overrides,
         stop_on_success=cfg.eval.get('stop_on_success', False),
     )

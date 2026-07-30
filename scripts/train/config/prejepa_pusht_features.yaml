@@ -1,0 +1,74 @@
+defaults:
+  - launcher: local
+  - _self_
+
+hydra:
+  job:
+    chdir: true
+
+# --- Run ---
+output_model_name: pusht_${backbone.type}_actiononly_cachedfeats_p${predictor.size}
+subdir: null
+seed: 42
+
+# --- Data (pre-extracted features) ---
+# Run scripts/extract/extract_dino_features_pusht.py once first.
+# That writes pusht_expert_train_features.h5 with DINOv2-small features
+# at frameskip-aligned positions (5x reduction in #frames).
+dataset_name: pusht_expert_train_features
+use_cached_features: true
+cache_dir: null
+n_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}
+frameskip: 1                    # already pre-subsampled during extraction
+
+batch_size: 256
+num_workers: 16
+train_split: 0.9
+
+# --- Backbone (metadata only; not called when use_cached_features=true) ---
+backbone:
+  name: facebook/dinov2-small
+  type: dinov2_small
+  is_video_encoder: false
+
+image_size: 224
+patch_size: 14
+
+# --- World model (action-only) ---
+wm:
+  history_size: 3
+  num_preds: 1
+  encoding:
+    action: 10                  # in_chans auto = action_dim(2) * frameskip(1) = 2
+
+predictor:
+  size: small
+  depth: 6
+  heads: 16
+  mlp_dim: 2048
+  dim_head: 64
+  dropout: 0.1
+  emb_dropout: 0.0
+
+# --- Optimizer ---
+optimizer:
+  type: AdamW
+  lr: 5e-4
+  weight_decay: 0.0
+
+# --- Trainer ---
+trainer:
+  max_epochs: 20
+  strategy: ddp
+  devices: auto
+  accelerator: gpu
+  precision: 16-mixed
+  gradient_clip_val: 1.0
+
+# --- Logging ---
+wandb:
+  enable: false
+  project: swm-pusht
+  entity: vocdex
+
+dump_object: true

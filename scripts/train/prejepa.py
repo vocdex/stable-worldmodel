@@ -230,8 +230,16 @@ def dinowm_forward(self, batch, stage, cfg):
 @hydra.main(version_base=None, config_path='./config', config_name='prejepa')
 def run(cfg):
     # --- Dataset ---
+    # Pre-extracted-features path: when cfg.use_cached_features=true the dataset
+    # loads frozen DINOv2 features (column 'features', shape (T, P, D) per frame)
+    # instead of raw 'pixels'. Skips the image preprocessor and (via the
+    # 4D-passthrough in PreJEPA._encode_image) the encoder forward at train
+    # time. Extract once with scripts/extract/extract_dino_features_cube.py.
+    use_cached_features = bool(cfg.get('use_cached_features', False))
+    visual_key = 'features' if use_cached_features else 'pixels'
+
     encoding_keys = list(cfg.wm.get('encoding', {}).keys())
-    keys_to_load = ['pixels'] + encoding_keys
+    keys_to_load = [visual_key] + encoding_keys
 
     dataset = swm.data.HDF5Dataset(
         cfg.dataset_name,
@@ -248,7 +256,21 @@ def run(cfg):
         for col in cfg.wm.get('encoding', {})
     ]
 
-    if cfg.backbone.get('is_video_encoder', False):
+    if use_cached_features:
+        # No image preprocessing — features are already DINO-encoded.
+        # Rename 'features' -> 'pixels' so the rest of the pipeline (the
+        # model's encode() / PreJEPA forward) is untouched.
+        class _RenameAndCastFeatures(spt.data.transforms.Transform):
+            def __call__(self, x):
+                feats = self.nested_get(x, 'features')
+                # h5 stored as fp16 (lz4-compressed). Cast to fp32 on read.
+                self.nested_set(x, feats.float(), 'pixels')
+                return x
+
+        transform = spt.data.transforms.Compose(
+            _RenameAndCastFeatures(), *normalizers,
+        )
+    elif cfg.backbone.get('is_video_encoder', False):
         processor = AutoVideoProcessor.from_pretrained(cfg.backbone.name)
         transform = spt.data.transforms.Compose(
             VideoPipeline(processor, source='pixels', target='pixels'),
@@ -365,10 +387,14 @@ def run(cfg):
         )
         logger.log_hyperparams(OmegaConf.to_container(cfg))
 
+    # NOTE: do NOT explicitly add CPUOffloadCallback — stable_pretraining
+    # auto-registers it (and other callbacks) via the
+    # 'stablepretraining_callbacks' entry point, which Lightning resolves
+    # at Trainer init. Adding it manually here triggers Lightning's
+    # "Found more than one stateful callback of type CPUOffloadCallback".
     trainer = pl.Trainer(
         **cfg.trainer,
         callbacks=[
-            spt.callbacks.CPUOffloadCallback(),
             SaveCkptCallback(
                 run_name=cfg.output_model_name,
                 cfg=cfg,

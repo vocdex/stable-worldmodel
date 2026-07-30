@@ -68,6 +68,14 @@ class PreJEPA(torch.nn.Module):
 
     def _encode_image(self, pixels):
         # == pixels embedding
+        # Pre-extracted-feature passthrough: if the dataset already loaded
+        # backbone features (shape (B, T, P, D) — 4 dims, last is hidden_size
+        # of the backbone), skip the encoder forward entirely. Lets PreJEPA
+        # train ~10-50x faster when frozen-encoder features are cached on
+        # disk via scripts/extract/extract_dino_features_*.py.
+        if pixels.ndim == 4:
+            return pixels.detach().to(torch.float32)
+
         B = pixels.shape[0]
         pixels = rearrange(pixels, 'b t ... -> (b t) ...')
 

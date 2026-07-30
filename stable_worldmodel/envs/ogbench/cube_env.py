@@ -320,6 +320,18 @@ class CubeEnv(ManipSpaceEnv):
             }
         )
 
+    @property
+    def _goal(self):
+        """Alias for `_cur_goal_rendered` so swm.world.evaluate_from_dataset's
+        variation_overrides re-render path (`env.unwrapped._goal`) works on
+        CubeEnv. PushT/SimpleNav store the rendered goal frame under `_goal`;
+        CubeEnv uses `_cur_goal_rendered` (set in `set_new_target` after
+        `_render_goal`). Returning `None` when no goal has been rendered keeps
+        the upstream code's `np.stack(...)` failing loudly rather than
+        silently producing zeros.
+        """
+        return getattr(self, "_cur_goal_rendered", None)
+
     def set_tasks(self):
         """Define all task configurations for the environment.
 
@@ -982,11 +994,11 @@ class CubeEnv(ManipSpaceEnv):
         grid_texture.rgb2 = self.variation_space['floor']['color'].value[1]
 
         # Modify arm color
-        agent_color_changed = np.allclose(
+        agent_color_changed = not np.allclose(
             mjcf_model.find('material', 'ur5e/robotiq/black').rgba[:3],
             self.variation_space['agent']['color'].value,
         )
-        agent_color_changed = agent_color_changed or np.allclose(
+        agent_color_changed = agent_color_changed or not np.allclose(
             mjcf_model.find('material', 'ur5e/robotiq/pad_gray').rgba[:3],
             self.variation_space['agent']['color'].value,
         )
@@ -1351,12 +1363,31 @@ class CubeEnv(ManipSpaceEnv):
                 f'cube_id out of range (maximum {num_target_pos - 1})'
             )
         mocap_id = self._cube_target_mocap_ids[cube_id]
-        self._data.mocap_pos[mocap_id] = np.asarray(
-            target_pos, dtype=np.float64
-        )
+        self._data.mocap_pos[mocap_id] = np.asarray(target_pos, dtype=np.float64)
         if target_quat is not None:
             self._data.mocap_quat[mocap_id] = target_quat
-        # mujoco.mj_forward(self._model, self._data)
+
+    def render_goal_scene(self, qpos, qvel):
+        """Render the env at a specified goal qpos/qvel and store the result in
+        ``self._cur_goal_rendered`` (consumed by ``swm.world``'s variation
+        re-render path via ``env._goal``).
+
+        Workflow: save start qpos/qvel → set env to goal state → mj_forward →
+        render → restore start state. Unlike ``set_target_pos(render_goal=True)``
+        (deprecated), this sets the **full** state (arm + cube), so the rendered
+        frame matches the H5 dataset's stored goal pixels (e.g. arm gripping
+        cube at target) rather than the misleading "arm at start, cube
+        teleported" composite.
+        """
+        saved_qpos = self._data.qpos.copy()
+        saved_qvel = self._data.qvel.copy()
+        self._data.qpos[:] = np.asarray(qpos, dtype=np.float64)
+        self._data.qvel[:] = np.asarray(qvel, dtype=np.float64)
+        mujoco.mj_forward(self._model, self._data)
+        self._cur_goal_rendered = self.render()
+        self._data.qpos[:] = saved_qpos
+        self._data.qvel[:] = saved_qvel
+        mujoco.mj_forward(self._model, self._data)
 
     def post_step(self):
         """Update environment state after each simulation step.
