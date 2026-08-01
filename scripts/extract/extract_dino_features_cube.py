@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import os
+import sys
 from pathlib import Path
 
 import h5py
@@ -199,10 +200,13 @@ def main():
     print(f'Feature memory: {n_kept * P * D * (2 if dtype != torch.float32 else 4) / 1e9:.1f} GB (raw)')
 
     # --- Build dataloader ---
+    # persistent_workers must stay OFF: this is a single pass, and persistent
+    # workers holding open h5 handles hung the interpreter at exit on galvani
+    # (job 2704605 idled 11h after 'Done.' until the SLURM time limit).
     ds = _FrameDataset(str(src_path), kept_indices, args.image_size)
     loader = DataLoader(
         ds, batch_size=args.batch_size, num_workers=args.num_workers,
-        pin_memory=True, persistent_workers=args.num_workers > 0,
+        pin_memory=True, persistent_workers=False,
     )
 
     # --- Open dst h5 with resizable feature dataset ---
@@ -256,6 +260,13 @@ def main():
     # Stats
     size_bytes = dst_path.stat().st_size
     print(f'\nDone. {dst_path} = {size_bytes / 1e9:.1f} GB')
+
+    # The dst h5 is closed (with-block) and the size stat above proves the
+    # write completed. Don't trust interpreter teardown after this point:
+    # DataLoader workers with open h5 handles can hang the atexit joins,
+    # which stalls the srun step (and with it the whole SLURM job) forever.
+    sys.stdout.flush()
+    os._exit(0)
 
 
 if __name__ == '__main__':
