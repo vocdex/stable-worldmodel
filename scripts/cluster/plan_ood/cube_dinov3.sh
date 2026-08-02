@@ -39,6 +39,9 @@
 # Submit a subset (e.g. seed-42 cells only):
 #   sbatch --array=0-14 scripts/cluster/plan_ood/cube_dinov3.sh
 #
+# Extra seed (e.g. seed 2 to align with the cjepa PDF's {0,1,2} seed set):
+#   SEEDS=2 sbatch --array=0-14 scripts/cluster/plan_ood/cube_dinov3.sh
+#
 # Override knobs via env:
 #   EPOCH=20 NUM_EVAL=50 NUM_SAMPLES=300 sbatch scripts/cluster/plan_ood/cube_dinov3.sh
 # -----------------------------------------------------------------------------
@@ -71,7 +74,7 @@ CELLS=(
   "light_intensity_bright|{variation:[light.intensity],variation_values:{light.intensity:[0.95]}}"
 )
 
-SEEDS=(42 0 1)
+read -r -a SEEDS <<< "${SEEDS:-42 0 1}"   # override e.g. SEEDS=2 for a single extra seed
 N_CELLS=${#CELLS[@]}
 TOTAL=$((N_CELLS * ${#SEEDS[@]}))
 if [ "$SLURM_ARRAY_TASK_ID" -ge "$TOTAL" ]; then
