@@ -1,0 +1,81 @@
+defaults:
+  - launcher: local
+  - _self_       # listed last so cube-specific values override launcher defaults
+
+hydra:
+  job:
+    chdir: true
+
+# --- Run ---
+# 256px variant of the DINOv3 ablation: same 224px source frames UPSCALED to
+# 256 before encoding, so DINOv3-S/16 runs at its native pretraining
+# resolution and produces a 16x16 = 256-patch grid — identical token count
+# to the DINOv2-S/14 baseline. No new image information is added; this
+# isolates the token-grid / resolution hypothesis for the in-dist gap
+# (74 vs ~65 at 224px, where DINOv3 only gets 14x14 = 196 patches).
+output_model_name: cube_${backbone.type}_actiononly_cachedfeats_p${predictor.size}
+subdir: null
+seed: 42
+
+# --- Data (pre-extracted features) ---
+# Run scripts/extract/extract_dino_features_cube.py once first with
+#   --backbone facebook/dinov3-vits16-pretrain-lvd1689m
+#   --image_size 256
+#   --dst <datasets>/cube_single_expert_dinov3_256_features.h5
+dataset_name: cube_single_expert_dinov3_256_features
+use_cached_features: true       # PreJEPA._encode_image is a passthrough when 4D inputs arrive
+cache_dir: null
+n_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}
+frameskip: 1                    # already pre-subsampled during extraction; don't subsample again
+
+batch_size: 256                 # tiny memory footprint without encoder forward
+num_workers: 16
+train_split: 0.9
+
+# --- Backbone (loaded for embed_dim/num_patches metadata only; not called) ---
+backbone:
+  name: facebook/dinov3-vits16-pretrain-lvd1689m
+  type: dinov3_small_256        # distinct type so the ckpt dir doesn't collide with the 224px run
+  is_video_encoder: false
+
+image_size: 256
+patch_size: 16                  # (256/16)^2 = 256 patches — same grid as DINOv2-S/14 at 224
+
+# --- World model (action-only) ---
+wm:
+  history_size: 3
+  num_preds: 1
+  encoding:
+    action: 10                  # in_chans auto = action_dim(5) * frameskip(1, since cached) = 5
+
+predictor:
+  size: small
+  depth: 6
+  heads: 16
+  mlp_dim: 2048
+  dim_head: 64
+  dropout: 0.1
+  emb_dropout: 0.0
+
+# --- Optimizer ---
+optimizer:
+  type: AdamW
+  lr: 5e-4
+  weight_decay: 0.0
+
+# --- Trainer ---
+trainer:
+  max_epochs: 20
+  strategy: ddp
+  devices: auto
+  accelerator: gpu
+  precision: 16-mixed
+  gradient_clip_val: 1.0
+
+# --- Logging ---
+wandb:
+  enable: false
+  project: swm-cube
+  entity: vocdex
+
+dump_object: true

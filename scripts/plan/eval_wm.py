@@ -4,6 +4,7 @@ import os
 
 os.environ['MUJOCO_GL'] = 'egl'
 
+import sys
 import time
 from pathlib import Path
 
@@ -273,6 +274,14 @@ def run(cfg: DictConfig):
         f.write('==== RESULTS ====\n')
         f.write(f'metrics: {metrics}\n')
         f.write(f'evaluation_time: {end_time - start_time} seconds\n')
+
+    # All results (metrics print, results file, videos) are on disk at this
+    # point. Don't trust interpreter teardown: the EGL renderers / dataloader
+    # threads hang the exit on the cluster, which keeps the srun step alive
+    # for hours and blocks the sbatch tail (done-flags, CSV rows) — observed
+    # on the cube epoch sweep (job 2713313) and the extraction job (2704605).
+    sys.stdout.flush()
+    os._exit(0)
 
 
 if __name__ == '__main__':
