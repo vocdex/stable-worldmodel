@@ -138,7 +138,11 @@ fi
 echo ""
 
 # --- Step 2: train ---
-srun --kill-on-bad-exit=1 --unbuffered uv run python scripts/train/prejepa.py \
+# No srun: repo precedent (df0a61e "drop srun ... breaks PATH/env inheritance")
+# — cube_multi trained all multi-cube models srun-less, while srun-wrapped
+# trainings hung intermittently (job 2713834). PYTHONUNBUFFERED is exported;
+# a single task inside the allocation needs no launcher.
+uv run python scripts/train/prejepa.py \
     --config-name prejepa_cube_dinov3_256_features \
     cache_dir=$STABLEWM_HOME \
     trainer.max_epochs=20 \
