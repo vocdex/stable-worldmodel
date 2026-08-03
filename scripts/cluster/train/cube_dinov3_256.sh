@@ -142,6 +142,8 @@ srun --kill-on-bad-exit=1 --unbuffered uv run python scripts/train/prejepa.py \
     --config-name prejepa_cube_dinov3_256_features \
     cache_dir=$STABLEWM_HOME \
     trainer.max_epochs=20 \
+    trainer.strategy=auto \
+    trainer.devices=1 \
     +trainer.limit_val_batches=0 \
     batch_size=256 \
     num_workers=16 \
